@@ -22,3 +22,27 @@ func TestParseConfig(t *testing.T) {
 		t.Fatalf("home default: %+v", cfg)
 	}
 }
+
+func TestParseConfigBasePath(t *testing.T) {
+	none := func(string) string { return "" }
+	for in, want := range map[string]string{"": "", "/": "", "todo": "/todo", "/todo/": "/todo", "/a/b": "/a/b"} {
+		cfg, err := parseConfig(flag.NewFlagSet("serve", flag.ContinueOnError), []string{"--base-path", in}, none, "/h", true)
+		if err != nil || cfg.BasePath != want {
+			t.Fatalf("%q: %q %v", in, cfg.BasePath, err)
+		}
+	}
+	cfg, err := parseConfig(flag.NewFlagSet("serve", flag.ContinueOnError), nil, func(k string) string {
+		if k == "VINX_BASE_PATH" {
+			return "/env/"
+		}
+		return ""
+	}, "/h", true)
+	if err != nil || cfg.BasePath != "/env" {
+		t.Fatalf("env: %q %v", cfg.BasePath, err)
+	}
+	for _, bad := range []string{"/a?b", "/a#b", "/a b", "/../x", "/a/..", "/a//b"} {
+		if _, err := parseConfig(flag.NewFlagSet("serve", flag.ContinueOnError), []string{"--base-path", bad}, none, "/h", true); err == nil {
+			t.Fatalf("%q 应报错", bad)
+		}
+	}
+}

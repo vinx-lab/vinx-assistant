@@ -16,10 +16,10 @@
 </section>
 <section class="card">
   <h2>消耗最多的条目</h2>
-  {{if .TopItems}}<ul class="rows">{{range .TopItems}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">{{.TokensUsed}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
+  {{if .TopItems}}<ul class="rows">{{range .TopItems}}<li><a href="{{base}}/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">{{.TokensUsed}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>
 <section class="card">
   <h2>处理失败的条目</h2>
-  {{if .Failed}}<ul class="rows">{{range .Failed}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
+  {{if .Failed}}<ul class="rows">{{range .Failed}}<li><a href="{{base}}/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>
 {{end}}

@@ -1,9 +1,9 @@
 {{define "mtools"}}<button type="button" class="icon-btn m-filter" data-open-filter aria-controls="filter-sheet" aria-label="筛选{{if .Tag}}（已选标签 {{.Tag}}）{{end}}">{{template "i" "filter"}}{{if .Tag}}<span class="badge" aria-hidden="true"></span>{{end}}</button>{{end}}
 
-{{define "seg"}}<nav class="seg" aria-label="处理状态"><a href="{{.OpenHref}}" {{if not .Done}}aria-current="page"{{end}}>未处理 <b>{{.OpenCount}}</b></a><a href="{{.DoneHref}}" {{if .Done}}aria-current="page"{{end}}>已处理 <b>{{.DoneCount}}</b></a></nav>{{end}}
+{{define "seg"}}<nav class="seg" aria-label="处理状态"><a href="{{base}}{{.OpenHref}}" {{if not .Done}}aria-current="page"{{end}}>未处理 <b>{{.OpenCount}}</b></a><a href="{{base}}{{.DoneHref}}" {{if .Done}}aria-current="page"{{end}}>已处理 <b>{{.DoneCount}}</b></a></nav>{{end}}
 
 {{define "side"}}<section class="side-sec cats-sec"><h2 class="side-h">分类</h2>
-<nav class="sidenav cats" aria-label="分类">{{range .Tabs}}<a href="{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{template "i" (catIcon .Cat)}}{{.Name}} <b>{{.Count}}</b></a>{{end}}</nav></section>
+<nav class="sidenav cats" aria-label="分类">{{range .Tabs}}<a href="{{base}}{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{template "i" (catIcon .Cat)}}{{.Name}} <b>{{.Count}}</b></a>{{end}}</nav></section>
 {{/* 标签筛选：电脑上在侧栏里展开；手机上有脚本时放进底部抽屉（#filter-sheet），没有脚本时是页面里的折叠块 */}}
 <details class="filterbox" id="filterbox" {{if .Tag}}open{{end}}>
   <summary>{{template "i" "filter"}}筛选{{if .Tag}}<span class="fb-cur">：{{.Tag}}</span>{{end}}</summary>
@@ -11,22 +11,22 @@
     {{if .Toggle}}<section class="side-sec fb-state"><h2 class="side-h">状态</h2>{{template "seg" .}}</section>{{end}}
     {{if .Labels}}
     <section class="side-sec"><h2 class="side-h">类别标签</h2>
-      <div class="chips">{{range .Labels}}<a class="chip label{{if eq .Name $.Tag}} on{{end}}" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+      <div class="chips">{{range .Labels}}<a class="chip label{{if eq .Name $.Tag}} on{{end}}" href="{{base}}{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
     </section>
     {{end}}
     {{if .TopicHead}}
     <section class="side-sec"><h2 class="side-h">内容标签</h2>
-      <div class="chips">{{range .TopicHead}}<a class="chip topic{{if eq .Name $.Tag}} on{{end}}" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+      <div class="chips">{{range .TopicHead}}<a class="chip topic{{if eq .Name $.Tag}} on{{end}}" href="{{base}}{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
       {{if .TopicMore}}
       <details class="more" {{if .TopicMoreOpen}}open{{end}}>
         <summary>展开全部（另 {{len .TopicMore}} 个）</summary>
-        <div class="chips">{{range .TopicMore}}<a class="chip topic{{if eq .Name $.Tag}} on{{end}}" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+        <div class="chips">{{range .TopicMore}}<a class="chip topic{{if eq .Name $.Tag}} on{{end}}" href="{{base}}{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
       </details>
       {{end}}
     </section>
     {{end}}
     {{if not (or .Labels .TopicHead)}}<p class="side-empty">还没有标签</p>{{end}}
-    <div class="fb-foot">{{if .Tag}}<a class="btn" href="{{.ClearTagHref}}">清除</a>{{end}}<button type="button" class="btn primary" data-close-filter>查看 {{len .Items}} 条</button></div>
+    <div class="fb-foot">{{if .Tag}}<a class="btn" href="{{base}}{{.ClearTagHref}}">清除</a>{{end}}<button type="button" class="btn primary" data-close-filter>查看 {{len .Items}} 条</button></div>
   </div>
 </details>
 <dialog class="sheet" id="filter-sheet" aria-labelledby="sheet-h">
@@ -41,43 +41,43 @@
   {{if .Toggle}}{{template "seg" .}}{{end}}
 </div>
 {{with .Status}}
-{{if eq .WeChat "paused"}}<div class="alert warn">{{template "i" "wechat"}}<span>微信暂停（-14），{{.PausedUntil}} 自动重试。<a href="/login">查看</a></span></div>
-{{else if ne .WeChat "ok"}}<div class="alert warn">{{template "i" "wechat"}}<span>微信未登录，收不到新消息。<a href="/login">扫码登录</a></span></div>{{end}}
-{{if .NeedRelogin}}<div class="alert warn">{{template "i" "alert"}}<span><a href="/login">凭证反复失效，建议重新扫码</a></span></div>{{end}}
+{{if eq .WeChat "paused"}}<div class="alert warn">{{template "i" "wechat"}}<span>微信暂停（-14），{{.PausedUntil}} 自动重试。<a href="{{base}}/login">查看</a></span></div>
+{{else if ne .WeChat "ok"}}<div class="alert warn">{{template "i" "wechat"}}<span>微信未登录，收不到新消息。<a href="{{base}}/login">扫码登录</a></span></div>{{end}}
+{{if .NeedRelogin}}<div class="alert warn">{{template "i" "alert"}}<span><a href="{{base}}/login">凭证反复失效，建议重新扫码</a></span></div>{{end}}
 {{if .Drift}}<div class="alert warn">{{template "i" "alert"}}<span>收到 {{.Drift}} 个协议之外的字段，可能上游协议有变化，运行 make check-upstream 对照</span></div>{{end}}
 {{if or .Overdue .DueToday}}<div class="alert amber">{{template "i" "cal"}}<span>{{if .Overdue}}逾期 {{.Overdue}} 条{{end}}{{if and .Overdue .DueToday}} · {{end}}{{if .DueToday}}今天到期 {{.DueToday}} 条{{end}}</span></div>{{end}}
 {{end}}
-{{if .Tag}}<div class="filterline">筛选：<span class="chip label on">{{.Tag}}</span><a href="{{.ClearTagHref}}">清除</a></div>{{end}}
+{{if .Tag}}<div class="filterline">筛选：<span class="chip label on">{{.Tag}}</span><a href="{{base}}{{.ClearTagHref}}">清除</a></div>{{end}}
 
 {{if .Items}}
 <div class="list">
 {{range .Items}}
 <article class="row">
   {{if canCheck .}}
-  <form method="post" action="/items/{{.ID}}/status" class="check-form"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="done"><button type="submit" class="check" aria-label="标记完成：{{display .}}"><span class="ring">{{template "i" "check"}}</span></button></form>
+  <form method="post" action="{{base}}/items/{{.ID}}/status" class="check-form"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="done"><button type="submit" class="check" aria-label="标记完成：{{display .}}"><span class="ring">{{template "i" "check"}}</span></button></form>
   {{else}}
   <span class="kind-ico" title="{{catName .Category}}">{{template "i" (catIcon .Category)}}</span>
   {{end}}
   <div class="body">
-    <a class="title" href="/items/{{.ID}}">#{{.ID}} {{display .}}</a>
+    <a class="title" href="{{base}}/items/{{.ID}}">#{{.ID}} {{display .}}</a>
     {{if .Summary}}<p class="sum">{{.Summary}}</p>{{end}}
     <div class="meta">
       {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">{{template "i" "cal"}}截止 {{due .}}{{if overdue .}} 逾期{{end}}</span>{{end}}
       {{if .Priority}}<span class="prio prio-{{.Priority}}"><span class="sr-only">优先级</span>{{prioName .Priority}}</span>{{end}}
       {{if and (ne .Status "new") (ne .Status "open")}}<span class="st">{{statusName .Status}}</span>{{end}}
       {{if .URL}}<a class="src" href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{template "i" "link"}}<span>{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</span></a>{{end}}
-      {{range .Labels}}{{if ne . (catName $.Cat)}}<a class="chip label" href="/?cat={{$.Cat}}&tag={{.}}">{{.}}</a>{{end}}{{end}}
-      {{range .Topics}}<a class="chip topic" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
+      {{range .Labels}}{{if ne . (catName $.Cat)}}<a class="chip label" href="{{base}}/?cat={{$.Cat}}&tag={{.}}">{{.}}</a>{{end}}{{end}}
+      {{range .Topics}}<a class="chip topic" href="{{base}}/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
     </div>
   </div>
-  {{with index $.Thumbs .ID}}<img class="thumb" src="/media/{{.}}" alt="" loading="lazy" width="56" height="56">{{end}}
+  {{with index $.Thumbs .ID}}<img class="thumb" src="{{base}}/media/{{.}}" alt="" loading="lazy" width="56" height="56">{{end}}
   {{$it := .}}{{$ch := menuChoices .}}
   {{if or $ch (ne .Level "deep")}}
   <details class="rowmenu">
     <summary aria-label="更多操作：{{display .}}">{{template "i" "more"}}</summary>
     <div class="pop">
-      {{range $ch}}<form method="post" action="/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit">{{statusName .}}</button></form>{{end}}
-      {{if ne .Level "deep"}}<form method="post" action="/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit">深入研究</button></form>{{end}}
+      {{range $ch}}<form method="post" action="{{base}}/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit">{{statusName .}}</button></form>{{end}}
+      {{if ne .Level "deep"}}<form method="post" action="{{base}}/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit">深入研究</button></form>{{end}}
     </div>
   </details>
   {{end}}

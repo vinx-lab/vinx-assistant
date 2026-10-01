@@ -1,5 +1,8 @@
 // Vinx 助手页面脚本：二次确认、三档模型下拉、看板筛选抽屉、条目菜单、扫码登录轮询；没有外部依赖。
 (function () {
+  // 子路径前缀（反向代理挂在 /todo 之类下时非空），来自 <html data-base>
+  var base = document.documentElement.getAttribute('data-base') || '';
+
   // 1. 危险操作二次确认
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-confirm]');
@@ -51,7 +54,7 @@
     if (!out) return;
     out.textContent = '正在拉取…';
     b.disabled = true;
-    fetch('/settings/providers/' + encodeURIComponent(id) + '/models', { method: 'POST' })
+    fetch(base + '/settings/providers/' + encodeURIComponent(id) + '/models', { method: 'POST' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (j.error) { out.textContent = '拉取失败：' + j.error; return; }
@@ -112,7 +115,7 @@
   var active = ['waiting', 'scanned', 'need_verify'];
   if (active.indexOf(box.getAttribute('data-login-state')) < 0) return;
   var timer = setInterval(function () {
-    fetch('/login/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) {
+    fetch(base + '/login/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) {
       document.getElementById('login-msg').textContent = s.message;
       document.getElementById('login-qr-box').hidden = !s.has_qr;
       document.getElementById('login-verify').hidden = s.state !== 'need_verify';

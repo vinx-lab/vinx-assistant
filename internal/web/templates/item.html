@@ -1,6 +1,6 @@
 {{define "content"}}
 {{with .Item}}
-<p class="crumb"><a href="/?cat={{.Category}}">{{template "i" "back"}}返回{{catName .Category}}</a></p>
+<p class="crumb"><a href="{{base}}/?cat={{.Category}}">{{template "i" "back"}}返回{{catName .Category}}</a></p>
 <article class="card detail">
   <div class="detail-head">
     <span class="kind-ico" title="{{catName .Category}}">{{template "i" (catIcon .Category)}}</span>
@@ -12,7 +12,7 @@
     {{if .Priority}}<span class="prio prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
     <span>收到于 {{fmtTime .CreatedAt}}</span>
   </div>
-  {{if or .Labels .Topics}}<div class="chips tags-line">{{range .Labels}}<a class="chip label" href="/?cat={{$.Item.Category}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="chip topic" href="/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}</div>{{end}}
+  {{if or .Labels .Topics}}<div class="chips tags-line">{{range .Labels}}<a class="chip label" href="{{base}}/?cat={{$.Item.Category}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="chip topic" href="{{base}}/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}</div>{{end}}
   {{if .URL}}<p class="link-card"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{template "i" "link"}}<span>{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</span></a>{{if .LinkDesc}}<small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
   {{if .Summary}}<p class="lead">{{.Summary}}</p>{{end}}
   {{if .ProcessError}}<p class="error">AI 处理失败（第 {{.ProcessAttempts}} 次）：{{.ProcessError}}</p>{{end}}
@@ -28,10 +28,10 @@
   <div class="atts">
   {{range .Atts}}
     {{if ne .State "ok"}}<div class="att"><span class="kind">{{.Kind}}</span><span class="meta-text">下载{{if eq .State "failed"}}失败{{else}}中{{end}}：{{.LastError}}</span></div>
-    {{else if eq .Kind "image"}}<div class="att img"><a href="/media/{{.RelPath}}" target="_blank"><img src="/media/{{.RelPath}}" alt="图片附件" loading="lazy"></a></div>
-    {{else if eq .Kind "voice"}}<div class="att"><span class="kind">语音</span>转写见原文 · <a href="/media/{{.RelPath}}?download=1">下载原文件</a></div>
-    {{else if eq .Kind "video"}}<div class="att"><span class="kind">视频</span><a href="/media/{{.RelPath}}?download=1">下载</a></div>
-    {{else}}<div class="att"><span class="kind">文件</span><a href="/media/{{.RelPath}}">{{.FileName}}</a></div>{{end}}
+    {{else if eq .Kind "image"}}<div class="att img"><a href="{{base}}/media/{{.RelPath}}" target="_blank"><img src="{{base}}/media/{{.RelPath}}" alt="图片附件" loading="lazy"></a></div>
+    {{else if eq .Kind "voice"}}<div class="att"><span class="kind">语音</span>转写见原文 · <a href="{{base}}/media/{{.RelPath}}?download=1">下载原文件</a></div>
+    {{else if eq .Kind "video"}}<div class="att"><span class="kind">视频</span><a href="{{base}}/media/{{.RelPath}}?download=1">下载</a></div>
+    {{else}}<div class="att"><span class="kind">文件</span><a href="{{base}}/media/{{.RelPath}}">{{.FileName}}</a></div>{{end}}
   {{end}}
   </div>
 </section>
@@ -39,7 +39,7 @@
 
 <section class="card">
   <h2>修改</h2>
-  <form method="post" action="/items/{{.Item.ID}}" class="stack">
+  <form method="post" action="{{base}}/items/{{.Item.ID}}" class="stack">
     <input type="hidden" name="updated_at" value="{{.Item.UpdatedAt.Unix}}">
     <div class="grid2">
       <label>分类
@@ -60,7 +60,7 @@
 <section class="card">
   <h2>深入研究</h2>
   <p class="desc">交给深度档模型重新整理，默认等下一批次。</p>
-  <form method="post" action="/items/{{.Item.ID}}/deep" class="inline">
+  <form method="post" action="{{base}}/items/{{.Item.ID}}/deep" class="inline">
     <input type="hidden" name="back" value="/items/{{.Item.ID}}">
     <label class="cb"><input type="checkbox" name="now" value="1"> 立即整理</label>
     <button type="submit" class="btn">深入研究</button>

@@ -1,32 +1,32 @@
 {{define "layout"}}<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-base="{{base}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>{{.Title}} · Vinx 助手</title>
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="{{base}}/static/app.css">
+<script src="{{base}}/static/app.js" defer></script>
 </head>
 <body class="nav-{{.Nav}}">
 {{template "sprite"}}
 <a class="skip" href="#main">跳到正文</a>
 <header class="topbar">
   <div class="container top-in">
-    {{if .Up}}<a class="icon-btn m-back" href="{{.Up}}" aria-label="返回">{{template "i" "back"}}</a>{{end}}
-    <a class="brand" href="/"><span class="logo" aria-hidden="true">V</span>Vinx 助手</a>
+    {{if .Up}}<a class="icon-btn m-back" href="{{base}}{{.Up}}" aria-label="返回">{{template "i" "back"}}</a>{{end}}
+    <a class="brand" href="{{base}}/"><span class="logo" aria-hidden="true">V</span>Vinx 助手</a>
     <p class="m-title" aria-hidden="true">{{.Title}}</p>
     <nav class="mainnav" aria-label="主导航">
-      <a href="/" {{if eq .Nav "board"}}aria-current="page"{{end}}>{{template "i" "inbox"}}看板</a>
-      <a href="/search" {{if eq .Nav "search"}}aria-current="page"{{end}}>{{template "i" "search"}}搜索</a>
-      <a href="/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>{{template "i" "settings"}}设置</a>
+      <a href="{{base}}/" {{if eq .Nav "board"}}aria-current="page"{{end}}>{{template "i" "inbox"}}看板</a>
+      <a href="{{base}}/search" {{if eq .Nav "search"}}aria-current="page"{{end}}>{{template "i" "search"}}搜索</a>
+      <a href="{{base}}/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>{{template "i" "settings"}}设置</a>
     </nav>
     <div class="top-right">
       {{block "mtools" .}}{{end}}
       {{with .Top}}
-      {{if eq .WeChat "ok"}}<a class="dot" href="/login">微信正常</a>{{else if eq .WeChat "paused"}}<a class="dot bad" href="/login">微信暂停</a>{{else}}<a class="dot bad" href="/login">微信未登录</a>{{end}}
+      {{if eq .WeChat "ok"}}<a class="dot" href="{{base}}/login">微信正常</a>{{else if eq .WeChat "paused"}}<a class="dot bad" href="{{base}}/login">微信暂停</a>{{else}}<a class="dot bad" href="{{base}}/login">微信未登录</a>{{end}}
       {{if .Running}}<span class="next">正在整理…</span>{{else if .NextBatch}}<span class="next">下次整理 {{.NextBatch}}</span>{{end}}
-      <form method="post" action="/batch/run" class="run">
+      <form method="post" action="{{base}}/batch/run" class="run">
         <input type="hidden" name="back" value="{{.Back}}">
         <button type="submit" class="btn primary run-btn" aria-label="立即整理" {{if .Running}}disabled{{end}}>{{template "i" "spark"}}<span class="run-text">立即整理</span></button>
       </form>
@@ -46,7 +46,7 @@
 </html>{{end}}
 
 {{/* 设置的小节导航：电脑在左侧栏，手机上隐藏（手机走 /settings 的分组列表） */}}
-{{define "setnav"}}{{range settingGroups}}<section class="side-sec"><h2 class="side-h">{{.Name}}</h2><nav class="sidenav" aria-label="设置：{{.Name}}">{{range .Sections}}<a href="{{.Href}}" {{if eq .Key $.Sub}}aria-current="page"{{end}}>{{template "i" .Icon}}{{.Name}}</a>{{end}}</nav></section>{{end}}{{end}}
+{{define "setnav"}}{{range settingGroups}}<section class="side-sec"><h2 class="side-h">{{.Name}}</h2><nav class="sidenav" aria-label="设置：{{.Name}}">{{range .Sections}}<a href="{{base}}{{.Href}}" {{if eq .Key $.Sub}}aria-current="page"{{end}}>{{template "i" .Icon}}{{.Name}}</a>{{end}}</nav></section>{{end}}{{end}}
 
 {{define "i"}}<svg class="i" aria-hidden="true" focusable="false"><use href="#i-{{.}}"></use></svg>{{end}}
 

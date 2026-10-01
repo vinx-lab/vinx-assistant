@@ -9,6 +9,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -46,6 +47,30 @@ type Deps struct {
 
 	// AllowedHosts 是除 localhost、回环地址、本机网卡 IP 之外允许的 Host（如 Tailscale 域名），见 hosts.go。
 	AllowedHosts []string
+
+	// BasePath 是挂在反向代理子路径下时的前缀（如 "/todo"，规范化见 NormalizeBasePath）；空表示挂在根上。
+	BasePath string
+}
+
+// NormalizeBasePath 规范化子路径前缀：空或 "/" 表示无前缀；否则以 "/" 开头、去掉结尾 "/"。
+// 含 ? # 空白、反斜杠、控制字符、百分号或 ".." 的值视为非法。
+func NormalizeBasePath(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "/" {
+		return "", nil
+	}
+	if strings.ContainsAny(v, "?#% \\\t\r\n") || strings.Contains(v, "..") || strings.Contains(v, "//") {
+		return "", fmt.Errorf("非法的 base-path %q", v)
+	}
+	for _, c := range v {
+		if c < 0x20 || c == 0x7f {
+			return "", fmt.Errorf("非法的 base-path %q", v)
+		}
+	}
+	if !strings.HasPrefix(v, "/") {
+		v = "/" + v
+	}
+	return strings.TrimRight(v, "/"), nil
 }
 
 type Server struct {
@@ -64,6 +89,11 @@ func New(d Deps) *Server {
 	if d.Clock == nil {
 		d.Clock = clock.Real{}
 	}
+	if bp, err := NormalizeBasePath(d.BasePath); err == nil {
+		d.BasePath = bp
+	} else {
+		panic(err)
+	}
 	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts)}
 	for _, name := range pageNames {
 		s.pages[name] = template.Must(template.New(name).Funcs(s.funcs()).
@@ -79,7 +109,21 @@ func Register(mux *http.ServeMux, d Deps) *Server {
 	return s
 }
 
-func (s *Server) Routes(mux *http.ServeMux) {
+// Routes 注册所有路由。BasePath 非空时全部挂在前缀下：前缀本身 308 到带斜杠的地址，前缀之外的网页路径 404。
+// 前缀在进入处理器之前剥掉，处理器里的 r.URL.Path 和内部地址一律不带前缀，输出地址时再由 base 加上。
+func (s *Server) Routes(root *http.ServeMux) {
+	mux := root
+	if s.d.BasePath != "" {
+		mux = http.NewServeMux()
+		root.Handle(s.d.BasePath+"/", http.StripPrefix(s.d.BasePath, mux))
+		root.HandleFunc(s.d.BasePath, func(w http.ResponseWriter, r *http.Request) {
+			to := s.d.BasePath + "/"
+			if r.URL.RawQuery != "" {
+				to += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, to, http.StatusPermanentRedirect)
+		})
+	}
 	cop := http.NewCrossOriginProtection()
 	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(h)) }
 	post := func(pattern string, h http.HandlerFunc) { mux.Handle("POST "+pattern, s.secure(cop.Handler(h))) }
@@ -230,12 +274,14 @@ func withMsg(path, msg string) string {
 	return path + sep + "msg=" + msg
 }
 
-func redirect(w http.ResponseWriter, r *http.Request, to string) {
-	http.Redirect(w, r, to, http.StatusSeeOther)
+// redirect 303 到站内地址 to（不带前缀），Location 里加上 BasePath。
+func (s *Server) redirect(w http.ResponseWriter, r *http.Request, to string) {
+	http.Redirect(w, r, s.d.BasePath+to, http.StatusSeeOther)
 }
 
 func (s *Server) funcs() template.FuncMap {
 	return template.FuncMap{
+		"base":       func() string { return s.d.BasePath },
 		"display":    func(it model.Item) string { return it.DisplayTitle() },
 		"catName":    model.CategoryName,
 		"statusName": model.StatusName,

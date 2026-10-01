@@ -212,10 +212,10 @@ func splitTopics(tags []store.TagCount, n int, active string) (head, more []stor
 func (s *Server) batchRun(w http.ResponseWriter, r *http.Request) {
 	back := safeBack(r.FormValue("back"))
 	if s.d.BatchNow != nil && s.d.BatchNow() {
-		redirect(w, r, withMsg(back, "started"))
+		s.redirect(w, r, withMsg(back, "started"))
 		return
 	}
-	redirect(w, r, withMsg(back, "busy"))
+	s.redirect(w, r, withMsg(back, "busy"))
 }
 
 func (s *Server) itemID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -282,7 +282,7 @@ func (s *Server) itemStatus(w http.ResponseWriter, r *http.Request) {
 	}); !ok {
 		return
 	}
-	redirect(w, r, withMsg(safeBack(r.FormValue("back")), "status"))
+	s.redirect(w, r, withMsg(safeBack(r.FormValue("back")), "status"))
 }
 
 // itemDeep 是「深入研究」按钮：把深度提到 deep、清零失败次数，等下一批次处理；勾了「立即整理」就马上跑。
@@ -301,5 +301,5 @@ func (s *Server) itemDeep(w http.ResponseWriter, r *http.Request) {
 			msg = "busy"
 		}
 	}
-	redirect(w, r, withMsg(safeBack(r.FormValue("back")), msg))
+	s.redirect(w, r, withMsg(safeBack(r.FormValue("back")), msg))
 }

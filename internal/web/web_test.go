@@ -35,7 +35,9 @@ type env struct {
 	running atomic.Bool  // 模拟「正在整理」
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvBase(t, "") }
+
+func newEnvBase(t *testing.T, base string) *env {
 	t.Helper()
 	e := &env{}
 	dir := t.TempDir()
@@ -51,7 +53,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(e.ilink.Close)
 	e.media = filepath.Join(dir, "media")
 	d := Deps{
-		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: e.media,
+		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: e.media, BasePath: base,
 		BatchNow: func() bool {
 			if e.running.Load() {
 				return false

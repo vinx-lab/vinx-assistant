@@ -172,5 +172,5 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, withMsg(r.URL.Path, "saved"))
+	s.redirect(w, r, withMsg(r.URL.Path, "saved"))
 }

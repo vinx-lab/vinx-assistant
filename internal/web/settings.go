@@ -265,7 +265,7 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	if section == "" {
 		section = "rules"
 	}
-	redirect(w, r, withMsg(sectionHref(section), "saved"))
+	s.redirect(w, r, withMsg(sectionHref(section), "saved"))
 }
 
 // maxPromptRunes 是提示词说明的长度上限，防止误贴大段文字撑爆每次请求。
@@ -293,7 +293,7 @@ func (s *Server) settingsPrompt(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings/prompt?msg=saved")
+	s.redirect(w, r, "/settings/prompt?msg=saved")
 }
 
 func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +321,7 @@ func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings/models?msg=saved")
+	s.redirect(w, r, "/settings/models?msg=saved")
 }
 
 func newProviderID() string {
@@ -379,7 +379,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings/providers?msg=saved")
+	s.redirect(w, r, "/settings/providers?msg=saved")
 }
 
 // providerDelete 删除服务商，并清空引用它的档位。
@@ -406,7 +406,7 @@ func (s *Server) providerDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings/providers?msg=deleted")
+	s.redirect(w, r, "/settings/providers?msg=deleted")
 }
 
 // providerModels 拉取服务商的模型列表（POST：会带着密钥访问外部服务）并保存到服务商上，供三档下拉使用。错误信息里的密钥打码。

@@ -34,6 +34,8 @@
 
 **用域名访问**：网页只认 `localhost`、回环地址和本机网卡 IP 作为 Host（防 DNS rebinding）。用域名（如 Tailscale MagicDNS 名称）访问时，把域名写进环境变量 `VINX_ALLOWED_HOSTS`，多个用逗号分隔，例如 `VINX_ALLOWED_HOSTS=vinx.tailnet-xxxx.ts.net`。
 
+**挂在反向代理子路径下**：加 `--base-path /todo`（或 `VINX_BASE_PATH=/todo`）后，网页的所有地址都带这个前缀，反向代理不要剥前缀，原样转发 `/todo/...` 即可；`/todo` 会 308 到 `/todo/`，前缀之外的网页路径返回 404。默认为空，挂在根上。
+
 **安全提示**：网页默认没有密码。跨站提交会被拒绝，但任何能访问这个端口的人都能查看和修改全部条目与设置，请只在可信网络内监听（如 `--listen 127.0.0.1:3100` 或只在 Tailscale 网内开放）。
 
 ## 微信指令与提醒

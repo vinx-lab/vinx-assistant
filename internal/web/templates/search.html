@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="page-head"><h1>搜索</h1></div>
-<form method="get" action="/search" class="card stack" role="search">
+<form method="get" action="{{base}}/search" class="card stack" role="search">
   <label class="field">关键词<input type="search" name="q" value="{{.Q}}" autofocus enterkeyhint="search"></label>
   <div class="grid4">
     <label>分类
@@ -22,7 +22,7 @@
 <article class="row">
   <span class="kind-ico" title="{{catName .Category}}">{{template "i" (catIcon .Category)}}</span>
   <div class="body">
-    <a class="title" href="/items/{{.ID}}">#{{.ID}} {{display .}}</a>
+    <a class="title" href="{{base}}/items/{{.ID}}">#{{.ID}} {{display .}}</a>
     {{if .Summary}}<p class="sum">{{.Summary}}</p>{{end}}
     <div class="meta">
       <span>{{catName .Category}}</span><span class="sep" aria-hidden="true"></span><span>{{statusName .Status}}</span><span class="sep" aria-hidden="true"></span><span>{{fmtTime .CreatedAt}}</span>

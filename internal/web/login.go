@@ -68,7 +68,7 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
-		redirect(w, r, "/login")
+		s.redirect(w, r, "/login")
 		return
 	}
 	m.running = true
@@ -89,7 +89,7 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 		m.mu.Unlock()
 		if rec != nil {
 			s.d.Log.Error("扫码登录启动异常", "panic", rec)
-			redirect(w, r, "/login")
+			s.redirect(w, r, "/login")
 		}
 	}()
 	l := s.d.NewLogin()
@@ -102,7 +102,7 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 		m.status = LoginStatus{State: "failed", Message: "获取二维码失败：" + err.Error()}
 		m.mu.Unlock()
 		started = true
-		redirect(w, r, "/login")
+		s.redirect(w, r, "/login")
 		return
 	}
 	m.mu.Lock()
@@ -159,7 +159,7 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 		}
 		s.d.Log.Info("网页扫码登录结束", "state", m.status.State)
 	}()
-	redirect(w, r, "/login")
+	s.redirect(w, r, "/login")
 }
 
 func (s *Server) loginVerify(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +173,7 @@ func (s *Server) loginVerify(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
-	redirect(w, r, "/login")
+	s.redirect(w, r, "/login")
 }
 
 func (s *Server) loginStatus(w http.ResponseWriter, r *http.Request) {

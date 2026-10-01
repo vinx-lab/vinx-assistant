@@ -32,6 +32,8 @@ import (
 type Config struct {
 	Listen  string
 	DataDir string
+	// BasePath 是网页挂在反向代理子路径下的前缀（已规范化，如 "/todo"），空表示根。
+	BasePath string
 }
 
 func (c Config) DBPath() string   { return filepath.Join(c.DataDir, "vinx-assistant.db") }
@@ -98,6 +100,7 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 		},
 		NewLogin: func() *ilink.Login { return ilink.NewLogin(hc) },
 		// 用域名（如 Tailscale MagicDNS）访问网页时，把域名写进 VINX_ALLOWED_HOSTS（逗号分隔）。
+		BasePath:     cfg.BasePath,
 		AllowedHosts: web.ParseHosts(os.Getenv("VINX_ALLOWED_HOSTS")),
 	})
 	return a, nil
