@@ -31,6 +31,7 @@ type Fetcher struct {
 	UserAgent string
 	MaxBytes  int64
 	Timeout   time.Duration
+	GitHubAPI string // GitHub API 地址，空串表示 https://api.github.com；测试时指向假服务器
 }
 
 func NewFetcher(hc *http.Client) *Fetcher {
