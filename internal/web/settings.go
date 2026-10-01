@@ -164,7 +164,7 @@ func validBaseURL(s string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
-// providerSave 新增或修改服务商。修改时密钥留空表示不改。
+// providerSave 新增或修改服务商。修改时密钥留空表示不改；但地址变了时必须重填密钥。
 func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 	st, err := s.d.Store.LoadSettings(r.Context())
 	if err != nil {
@@ -184,6 +184,11 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 		for i := range st.AI.Providers {
 			if st.AI.Providers[i].ID == id {
 				p := &st.AI.Providers[i]
+				// 改了地址却沿用旧密钥，等于把密钥交给新地址（网站没有密码，别人可借此把密钥发到自己的服务器）。
+				if key == "" && p.APIKey != "" && base != p.BaseURL {
+					s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "API 地址变了，请重新填写密钥")
+					return
+				}
 				p.Name, p.BaseURL = name, base
 				if key != "" {
 					p.APIKey = key

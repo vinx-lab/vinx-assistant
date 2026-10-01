@@ -102,3 +102,39 @@ func TestSettingsValidation(t *testing.T) {
 		t.Fatalf("cross-site settings POST: %d", resp.StatusCode)
 	}
 }
+
+// 网站没有密码：改了服务商地址却留空密钥，会把旧密钥发到新地址，必须拒绝。
+func TestProviderBaseURLChangeRequiresKey(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.post(t, "/settings/providers", url.Values{"name": {"主力"}, "base_url": {"https://api.example.com"}, "api_key": {secretKey}})
+	st, _ := e.st.LoadSettings(ctx)
+	pid := st.AI.Providers[0].ID
+
+	resp, body := e.post(t, "/settings/providers", url.Values{"id": {pid}, "name": {"主力"}, "base_url": {"https://attacker.example"}, "api_key": {""}})
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "API 地址变了，请重新填写密钥") {
+		t.Fatalf("code %d", resp.StatusCode)
+	}
+	mustNotContain(t, body, secretKey)
+	if st, _ = e.st.LoadSettings(ctx); st.AI.Providers[0].BaseURL != "https://api.example.com" || st.AI.Providers[0].APIKey != secretKey {
+		t.Fatalf("provider changed: %+v", st.AI.Providers[0])
+	}
+	// 地址和新密钥一起改：可以。
+	resp, _ = e.post(t, "/settings/providers", url.Values{"id": {pid}, "name": {"主力"}, "base_url": {"https://api2.example.com"}, "api_key": {"sk-new-key-0000"}})
+	if st, _ = e.st.LoadSettings(ctx); resp.StatusCode != http.StatusSeeOther || st.AI.Providers[0].BaseURL != "https://api2.example.com" || st.AI.Providers[0].APIKey != "sk-new-key-0000" {
+		t.Fatalf("code %d provider %+v", resp.StatusCode, st.AI.Providers[0])
+	}
+	// 原来就没有密钥的服务商改地址：没有密钥可泄露，允许。
+	e.post(t, "/settings/providers", url.Values{"name": {"本地"}, "base_url": {"http://127.0.0.1:11434"}})
+	st, _ = e.st.LoadSettings(ctx)
+	resp, _ = e.post(t, "/settings/providers", url.Values{"id": {st.AI.Providers[1].ID}, "name": {"本地"}, "base_url": {"http://127.0.0.1:8080"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("keyless provider edit: %d", resp.StatusCode)
+	}
+}
+
+func TestSettingsShowsModelAdvice(t *testing.T) {
+	e := newEnv(t)
+	_, body := e.get(t, "/settings")
+	mustContain(t, body, "三档建议都用 deepseek-chat", "deepseek-reasoner 的 max_tokens 含思考过程")
+}

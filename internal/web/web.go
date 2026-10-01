@@ -45,12 +45,16 @@ type Deps struct {
 	NextBatch    func(now time.Time, times []string) (time.Time, bool) // batch.NextSlot
 	ListModels   func(ctx context.Context, p model.Provider) ([]string, error)
 	NewLogin     func() *ilink.Login
+
+	// AllowedHosts 是除 localhost、回环地址、本机网卡 IP 之外允许的 Host（如 Tailscale 域名），见 hosts.go。
+	AllowedHosts []string
 }
 
 type Server struct {
 	d     Deps
 	pages map[string]*template.Template
 	login *loginManager
+	hosts *hostGuard
 }
 
 var pageNames = []string{"login", "settings"}
@@ -62,7 +66,7 @@ func New(d Deps) *Server {
 	if d.Clock == nil {
 		d.Clock = clock.Real{}
 	}
-	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}}
+	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts)}
 	for _, name := range pageNames {
 		s.pages[name] = template.Must(template.New(name).Funcs(s.funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html"))
@@ -79,8 +83,8 @@ func Register(mux *http.ServeMux, d Deps) *Server {
 
 func (s *Server) Routes(mux *http.ServeMux) {
 	cop := http.NewCrossOriginProtection()
-	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, secure(h)) }
-	post := func(pattern string, h http.HandlerFunc) { mux.Handle("POST "+pattern, secure(cop.Handler(h))) }
+	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(h)) }
+	post := func(pattern string, h http.HandlerFunc) { mux.Handle("POST "+pattern, s.secure(cop.Handler(h))) }
 
 	// 计划 4 Task 3 把这里换成看板。
 	get("/{$}", func(w http.ResponseWriter, r *http.Request) { redirect(w, r, "/login") })
@@ -97,19 +101,19 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	get("/login/qr.png", s.loginQR)
 	get("/media/{path...}", s.media)
 	sub, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /static/", secure(http.StripPrefix("/static/", http.FileServerFS(sub))))
+	mux.Handle("GET /static/", s.secure(http.StripPrefix("/static/", http.FileServerFS(sub))))
 }
 
-// secure 给所有响应加上安全头：脚本、样式只能来自本站，页面不能被嵌进别的网站。
-func secure(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// secure 先检查 Host 头（防 DNS rebinding），再给所有响应加上安全头：脚本、样式只能来自本站，页面不能被嵌进别的网站。
+func (s *Server) secure(h http.Handler) http.Handler {
+	return s.hosts.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("X-Frame-Options", "DENY")
 		hd.Set("Referrer-Policy", "no-referrer")
 		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		h.ServeHTTP(w, r)
-	})
+	}), s)
 }
 
 // Page 是每个页面都有的数据。

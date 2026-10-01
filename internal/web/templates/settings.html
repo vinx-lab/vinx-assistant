@@ -6,7 +6,7 @@
     <input type="hidden" name="id" value="{{.ID}}">
     <label>名称<input name="name" value="{{.Name}}" required></label>
     <label>API 地址<input name="base_url" value="{{.BaseURL}}" required></label>
-    <label>密钥（当前 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}，留空不改）<input name="api_key" type="password" autocomplete="off"></label>
+    <label>密钥（当前 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}，留空不改；改了 API 地址须重填）<input name="api_key" type="password" autocomplete="off"></label>
     <div class="actions">
       <button type="submit">保存</button>
       <button type="button" data-models="{{.ID}}">拉取模型列表</button>
@@ -26,6 +26,7 @@
 
 <section>
   <h2>三档模型</h2>
+  <p class="meta">三档建议都用 deepseek-chat；deepseek-reasoner 的 max_tokens 含思考过程，轻量档容易被截断。</p>
   <form method="post" action="/settings/models" class="stack">
     {{range .Levels}}
     <fieldset>

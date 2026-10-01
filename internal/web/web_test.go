@@ -210,6 +210,7 @@ func TestStartPanicResetsRunning(t *testing.T) {
 	s.Routes(mux)
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/login/start", nil)
+		req.Host = "localhost:3100"
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		mux.ServeHTTP(httptest.NewRecorder(), req)
 		if i == 0 && s.login.get().State != "failed" {

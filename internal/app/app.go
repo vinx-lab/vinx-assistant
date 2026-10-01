@@ -92,6 +92,8 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 			return llm.New(p.BaseURL, p.APIKey, hc).Models(ctx)
 		},
 		NewLogin: func() *ilink.Login { return ilink.NewLogin(hc) },
+		// 用域名（如 Tailscale MagicDNS）访问网页时，把域名写进 VINX_ALLOWED_HOSTS（逗号分隔）。
+		AllowedHosts: web.ParseHosts(os.Getenv("VINX_ALLOWED_HOSTS")),
 	})
 	// 计划 3–4 在这里追加装配（计划 2 的 batch 已在上面随 web.Deps 装配）。
 	return a, nil
