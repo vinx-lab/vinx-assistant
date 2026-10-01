@@ -9,7 +9,7 @@
     {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
     {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}</span>{{end}}
     <span class="badge">收到于 {{fmtTime .CreatedAt}}</span>
-    {{range .Tags}}<a class="tag" href="/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}
+    {{range .Labels}}<a class="tag" href="/?cat={{$.Item.Category}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="tag" href="/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}
   </p>
   {{if .URL}}<p class="link link-card"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a>{{if .LinkDesc}}<small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
   {{if .Summary}}<p class="lead">{{.Summary}}</p>{{end}}
@@ -48,7 +48,8 @@
       </label>
       <label>截止日期<input type="date" name="due_date" value="{{.Form.DueDate}}"></label>
       <label>时刻 <small>可不填</small><input type="time" name="due_time" value="{{.Form.DueTime}}"></label>
-      <label class="full">标签 <small>逗号或顿号分隔</small><input name="tags" value="{{.Form.Tags}}"></label>
+      <label class="full">类别标签 <small>逗号或顿号分隔</small><input name="labels" value="{{.Form.Labels}}"></label>
+      <label class="full">内容标签 <small>逗号或顿号分隔</small><input name="topics" value="{{.Form.Topics}}"></label>
     </div>
     <div class="form-foot"><button type="submit" class="primary">保存</button></div>
   </form>

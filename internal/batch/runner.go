@@ -142,20 +142,13 @@ func (r *Runner) Run(ctx context.Context) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	tagCounts, err := r.Store.AllTags(ctx)
+	topics, labels, err := PromptTags(ctx, r.Store, settings)
 	if err != nil {
 		return Report{}, err
 	}
-	tags := make([]string, 0, min(len(tagCounts), maxPromptTags))
-	for _, tc := range tagCounts {
-		if len(tags) == maxPromptTags {
-			break
-		}
-		tags = append(tags, tc.Name)
-	}
 
 	ru := &run{
-		r: r, ctx: ctx, wctx: context.WithoutCancel(ctx), now: now, day: day, settings: settings, tags: tags,
+		r: r, ctx: ctx, wctx: context.WithoutCancel(ctx), now: now, day: day, settings: settings, topics: topics, labels: labels,
 		budget:   &Budget{Limit: settings.AI.DailyTokenLimit, Used: used},
 		rep:      &Report{},
 		stopped:  map[model.Level]bool{},
@@ -253,7 +246,8 @@ type run struct {
 	now      time.Time
 	day      string
 	settings model.Settings
-	tags     []string
+	topics   []string // 已有内容标签（最多 maxPromptTags 个）
+	labels   []string // 类别标签，AI 不得重复
 	budget   *Budget
 	rep      *Report
 	stopped  map[model.Level]bool
@@ -292,7 +286,7 @@ func (ru *run) chatter(level model.Level) (levelChatter, bool) {
 }
 
 func (ru *run) request(level model.Level, items []promptItem, images []string, modelName string) llm.Request {
-	return buildRequest(level, ru.now, ru.tags, items, images, modelName)
+	return buildRequest(ru.settings.Prompt, level, ru.now, ru.topics, ru.labels, items, images, modelName)
 }
 
 func pitemsOf(items []*model.Item, maxText int) []promptItem {
@@ -560,8 +554,8 @@ func (ru *run) applyOne(snap *model.Item, res Result, level model.Level, tokens 
 		ru.rep.Failed++
 		return
 	}
-	if len(res.Tags) > 0 {
-		if err := ru.r.Store.AddTags(ru.wctx, snap.ID, res.Tags); err != nil {
+	if topics := topicsOf(res.Tags, ru.labels); len(topics) > 0 {
+		if err := ru.r.Store.AddTags(ru.wctx, snap.ID, store.TagKindTopic, topics); err != nil {
 			ru.r.log().Warn("保存标签失败", "item", snap.ID, "err", err)
 		}
 	}
@@ -655,6 +649,65 @@ func (ru *run) loadImages(atts []model.Attachment) []string {
 			mime = "image/jpeg"
 		}
 		out = append(out, "data:"+mime+";base64,"+base64.StdEncoding.EncodeToString(data))
+	}
+	return out
+}
+
+// PromptTags 取整理提示词要用的标签：已有内容标签（按条目数排序，最多 maxPromptTags 个），
+// 以及类别标签（库里已有的、分类名、标签关键词规则里的，去重，最多 maxPromptTags 个）。
+func PromptTags(ctx context.Context, st *store.Store, settings model.Settings) (topics, labels []string, err error) {
+	tc, err := st.AllTags(ctx, store.TagKindTopic)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, t := range tc {
+		if len(topics) == maxPromptTags {
+			break
+		}
+		topics = append(topics, t.Name)
+	}
+	lc, err := st.AllTags(ctx, store.TagKindLabel)
+	if err != nil {
+		return nil, nil, err
+	}
+	seen := map[string]bool{}
+	add := func(n string) {
+		k := strings.ToLower(strings.TrimSpace(n))
+		if k == "" || seen[k] || len(labels) >= maxPromptTags {
+			return
+		}
+		seen[k] = true
+		labels = append(labels, strings.TrimSpace(n))
+	}
+	for _, c := range model.Categories {
+		if c != model.CatInbox {
+			add(model.CategoryName(c))
+		}
+	}
+	for _, r := range settings.Rules.LabelRules {
+		add(r.Label)
+	}
+	for _, t := range lc {
+		add(t.Name)
+	}
+	return topics, labels, nil
+}
+
+// topicsOf 整理 AI 返回的标签：去掉与类别标签重名的（忽略大小写），最多 maxTopics 个。
+func topicsOf(tags, labels []string) []string {
+	skip := map[string]bool{}
+	for _, l := range labels {
+		skip[strings.ToLower(l)] = true
+	}
+	var out []string
+	for _, t := range model.NormalizeTags(tags) {
+		if skip[strings.ToLower(t)] {
+			continue
+		}
+		out = append(out, t)
+		if len(out) == maxTopics {
+			break
+		}
 	}
 	return out
 }

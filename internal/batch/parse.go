@@ -229,7 +229,7 @@ func parseItems(content string, items []*model.Item, needDetail bool) (map[int64
 	return results, errs, nil
 }
 
-// apply 把 AI 的结果写回条目（纯函数，只改 AI 负责的字段，不碰 Tags——标签由调用方用 store.AddTags 写入 r.Tags，调用方在 store.ModifyItem 回调里调用）。
+// apply 把 AI 的结果写回条目（纯函数，只改 AI 负责的字段，不碰标签——内容标签由调用方用 store.AddTags 写入 r.Tags，调用方在 store.ModifyItem 回调里调用）。
 func apply(it *model.Item, r Result, level model.Level) {
 	// 只有 AI 定的分类、且状态还是该分类的初始状态（用户没动过进度）时，AI 才能改分类。
 	if it.CategoryBy == model.ByAI && it.Status == model.DefaultStatus(it.Category) && r.Category != it.Category {

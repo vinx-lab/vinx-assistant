@@ -22,20 +22,20 @@ func TestItemPageAndEdit(t *testing.T) {
 		t.Fatalf("code %d", code)
 	}
 	mustContain(t, body, "#1 合同", "未整理")
-	resp, _ := e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"category": {"todo"}, "tags": {"#合同、 法务,合同"}, "due_date": {"2026-10-08"}, "due_time": {""}, "priority": {"high"}}))
+	resp, _ := e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"category": {"todo"}, "labels": {"票据"}, "topics": {"#合同、 法务,合同,票据"}, "due_date": {"2026-10-08"}, "due_time": {""}, "priority": {"high"}}))
 	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/items/1?msg=saved" {
 		t.Fatalf("save code %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	it, _ := e.st.GetItem(ctx, id)
 	if it.Category != model.CatTodo || it.CategoryBy != model.ByManual || it.Status != model.StatusOpen ||
-		it.Priority != model.PriorityHigh || it.DueHasTime || !it.DueAt.Equal(clock.At(2026, 10, 8, 0, 0)) || len(it.Tags) != 2 {
+		it.Priority != model.PriorityHigh || it.DueHasTime || !it.DueAt.Equal(clock.At(2026, 10, 8, 0, 0)) || len(it.Topics) != 2 || len(it.Labels) != 1 {
 		t.Fatalf("after save %+v", it)
 	}
 	resp, body = e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"category": {"todo"}, "due_time": {"15:00"}, "priority": {""}}))
 	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "填了时刻就要填日期") {
 		t.Fatalf("bad edit: %d", resp.StatusCode)
 	}
-	if again, _ := e.st.GetItem(ctx, id); !again.DueAt.Equal(clock.At(2026, 10, 8, 0, 0)) || len(again.Tags) != 2 {
+	if again, _ := e.st.GetItem(ctx, id); !again.DueAt.Equal(clock.At(2026, 10, 8, 0, 0)) || len(again.Topics) != 2 {
 		t.Fatal("failed edit must not save")
 	}
 	// 已整理的条目，分类下拉里没有「未整理」，提交 inbox 也被拒绝。
@@ -59,12 +59,12 @@ func TestItemInboxKeepsInbox(t *testing.T) {
 	id := e.item(t, &model.Item{MsgID: "1", RawText: "合同", Category: model.CatInbox})
 	_, body := e.get(t, "/items/1")
 	mustContain(t, body, `<option value="inbox" selected>`)
-	resp, _ := e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"category": {"inbox"}, "tags": {"法务"}}))
+	resp, _ := e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"category": {"inbox"}, "topics": {"法务"}}))
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("code %d", resp.StatusCode)
 	}
 	it, _ := e.st.GetItem(ctx, id)
-	if it.Category != model.CatInbox || it.CategoryBy == model.ByManual || len(it.Tags) != 1 {
+	if it.Category != model.CatInbox || it.CategoryBy == model.ByManual || len(it.Topics) != 1 {
 		t.Fatalf("%+v", it)
 	}
 }
@@ -105,12 +105,12 @@ func TestApplyEdit(t *testing.T) {
 		{"非法优先级", editForm{Category: "todo", Priority: "urgent"}, true, "", ""},
 	}
 	done := &model.Item{Category: model.CatResearch, Status: model.StatusDone}
-	if _, err := applyEdit(done, editForm{Category: "todo"}); err != nil || done.Status != model.StatusDone || done.CategoryBy != model.ByManual {
+	if _, _, err := applyEdit(done, editForm{Category: "todo"}); err != nil || done.Status != model.StatusDone || done.CategoryBy != model.ByManual {
 		t.Errorf("done 在待办里也合法，应保留：%+v", done)
 	}
 	for _, c := range cases {
 		it := base()
-		_, err := applyEdit(it, c.f)
+		_, _, err := applyEdit(it, c.f)
 		if (err != nil) != c.err {
 			t.Errorf("%s: err=%v", c.name, err)
 			continue
@@ -156,14 +156,14 @@ func TestItemSaveRejectsStaleForm(t *testing.T) {
 	if _, err := e.st.ModifyItem(ctx, id, func(it *model.Item) error { it.Status, it.DueAt = model.StatusDone, &due; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	resp, body := e.post(t, "/items/1", url.Values{"updated_at": {seen}, "category": {"todo"}, "tags": {"法务"}, "due_date": {"2026-10-08"}, "priority": {"high"}})
+	resp, body := e.post(t, "/items/1", url.Values{"updated_at": {seen}, "category": {"todo"}, "topics": {"法务"}, "due_date": {"2026-10-08"}, "priority": {"high"}})
 	if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "条目已被更新，请刷新后再改") {
 		t.Fatalf("stale save: code %d", resp.StatusCode)
 	}
 	// 拒绝后表单换成最新值和新的 updated_at
 	cur, _ := e.st.GetItem(ctx, id)
 	mustContain(t, body, `value="2026-10-09"`, `name="updated_at" value="`+strconv.FormatInt(cur.UpdatedAt.Unix(), 10)+`"`)
-	if cur.Status != model.StatusDone || !cur.DueAt.Equal(due) || cur.Priority == model.PriorityHigh || len(cur.Tags) != 0 {
+	if cur.Status != model.StatusDone || !cur.DueAt.Equal(due) || cur.Priority == model.PriorityHigh || len(cur.Topics) != 0 {
 		t.Fatalf("stale form overwrote item: %+v", cur)
 	}
 	// 缺少 updated_at 也拒绝

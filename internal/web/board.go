@@ -109,7 +109,7 @@ type boardData struct {
 	// 切换和清除标签的链接，以及两个视图的条目数
 	OpenHref, DoneHref, ClearTagHref string
 	OpenCount, DoneCount             int
-	Tags                             []store.TagCount
+	Labels, Topics                   []store.TagCount
 	Items                            []model.Item
 	Thumbs                           map[int64]string
 	Back                             string
@@ -167,7 +167,11 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if d.Tags, err = s.d.Store.AllTags(ctx); err != nil {
+	if d.Labels, err = s.d.Store.AllTags(ctx, store.TagKindLabel); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if d.Topics, err = s.d.Store.AllTags(ctx, store.TagKindTopic); err != nil {
 		s.fail(w, err)
 		return
 	}

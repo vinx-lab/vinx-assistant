@@ -88,6 +88,13 @@ func (e *tenv) run(t *testing.T) Report {
 	return rep
 }
 
+// lightReq 按整理时实际会用的设置和标签构造请求，用来估算 token。
+func (e *tenv) lightReq(items []promptItem, images []string, modelName string) llm.Request {
+	st, _ := e.st.LoadSettings(context.Background())
+	topics, labels, _ := PromptTags(context.Background(), e.st, st)
+	return buildRequest(st.Prompt, model.LevelLight, e.clk.Now(), topics, labels, items, images, modelName)
+}
+
 type obj = map[string]any
 
 func TestLightBatchClassifiesAndTags(t *testing.T) {
@@ -123,7 +130,7 @@ func TestLightBatchClassifiesAndTags(t *testing.T) {
 	}
 
 	it1 := e.get(t, id1)
-	if it1.Category != model.CatLater || it1.Status != model.StatusNew || it1.Title != "SQLite 文章" || !reflect.DeepEqual(it1.Tags, []string{"SQLite", "数据库"}) || it1.ProcessedLevel != model.LevelLight {
+	if it1.Category != model.CatLater || it1.Status != model.StatusNew || it1.Title != "SQLite 文章" || !reflect.DeepEqual(it1.Topics, []string{"SQLite", "数据库"}) || it1.ProcessedLevel != model.LevelLight {
 		t.Fatalf("it1 = %+v", it1)
 	}
 	it2 := e.get(t, id2)
@@ -228,7 +235,7 @@ func TestTokenLimitSkipsBigItemOnly(t *testing.T) {
 	big := e.add(t, &model.Item{RawText: strings.Repeat("很长的内容", 1000)})
 	small := e.add(t, &model.Item{RawText: "短"})
 	smallItem := e.get(t, small)
-	est := Estimate(buildRequest(model.LevelLight, e.clk.Now(), nil, []promptItem{toPromptItem(smallItem, lightTextRunes)}, nil, ""))
+	est := Estimate(e.lightReq([]promptItem{toPromptItem(smallItem, lightTextRunes)}, nil, ""))
 	s, _ := e.st.LoadSettings(context.Background())
 	s.AI.DailyTokenLimit = est*3/2 + 10 // 预算比较时估算值留 1.5 倍余量
 	e.st.SaveSettings(context.Background(), s)
@@ -402,7 +409,7 @@ func (e *tenv) hook(before func(ctx context.Context)) {
 func TestBudgetKeepsMargin(t *testing.T) {
 	e := newTEnv(t, nil)
 	id := e.add(t, &model.Item{RawText: "短"})
-	est := Estimate(buildRequest(model.LevelLight, e.clk.Now(), nil, []promptItem{toPromptItem(e.get(t, id), lightTextRunes)}, nil, ""))
+	est := Estimate(e.lightReq([]promptItem{toPromptItem(e.get(t, id), lightTextRunes)}, nil, ""))
 	s, _ := e.st.LoadSettings(context.Background())
 	s.AI.DailyTokenLimit = est + 10 // 够裸估算，但不够 1.5 倍余量
 	e.st.SaveSettings(context.Background(), s)
@@ -420,7 +427,7 @@ func TestUserEditDuringCallNotOverwritten(t *testing.T) {
 	a := e.add(t, &model.Item{RawText: "买打印纸"})
 	// b：已按轻量整理成待办，用户把深度调到中等后，在调用期间把它标记完成。
 	b := e.add(t, &model.Item{RawText: "研究 SQLite WAL", Category: model.CatTodo, Status: model.StatusOpen, ProcessedLevel: model.LevelLight, Level: model.LevelMedium})
-	if err := e.st.AddTags(ctx, a, []string{"待办"}); err != nil {
+	if err := e.st.AddTags(ctx, a, store.TagKindLabel, []string{"待办"}); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
@@ -450,7 +457,7 @@ func TestUserEditDuringCallNotOverwritten(t *testing.T) {
 	if ia.Category != model.CatTodo || ia.CategoryBy != model.ByManual || ia.Status != model.StatusDone {
 		t.Fatalf("user edit on a overwritten: %+v", ia)
 	}
-	if ia.Title != "买纸" || ia.ProcessedLevel != model.LevelLight || ia.TokensUsed != 150 || !reflect.DeepEqual(ia.Tags, []string{"办公", "待办"}) {
+	if ia.Title != "买纸" || ia.ProcessedLevel != model.LevelLight || ia.TokensUsed != 150 || !reflect.DeepEqual(ia.Topics, []string{"办公"}) || !reflect.DeepEqual(ia.Labels, []string{"待办"}) {
 		t.Fatalf("AI fields on a not applied: %+v", ia)
 	}
 	ib := e.get(t, b)
@@ -570,7 +577,7 @@ func TestMissingImageFileSkipped(t *testing.T) {
 func TestRetrySkippedForBudgetQueues(t *testing.T) {
 	e := newTEnv(t, nil)
 	id := e.add(t, &model.Item{RawText: "随便一条"})
-	est := Estimate(buildRequest(model.LevelLight, e.clk.Now(), nil, []promptItem{toPromptItem(e.get(t, id), lightTextRunes)}, nil, ""))
+	est := Estimate(e.lightReq([]promptItem{toPromptItem(e.get(t, id), lightTextRunes)}, nil, ""))
 	s, _ := e.st.LoadSettings(context.Background())
 	s.AI.DailyTokenLimit = est*3/2 + 10 // 第一次放得下；按估算记账后剩余不够再试一次
 	e.st.SaveSettings(context.Background(), s)

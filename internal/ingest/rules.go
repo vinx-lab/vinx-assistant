@@ -91,10 +91,25 @@ func keywordLabels(text string, prefixes []model.PrefixRule) []string {
 	return out
 }
 
+// ruleLabels 返回命中的标签关键词对应的标签：任何位置出现、忽略大小写，按规则顺序，去重。
+func ruleLabels(text string, rules []model.LabelRule) []string {
+	low := strings.ToLower(text)
+	var out []string
+	for _, r := range rules {
+		if r.Keyword == "" || strings.TrimSpace(r.Label) == "" {
+			continue
+		}
+		if strings.Contains(low, strings.ToLower(r.Keyword)) {
+			out = append(out, r.Label)
+		}
+	}
+	return out
+}
+
 func Classify(in Input, rules model.Rules, aiImages bool) Parsed {
 	text := strings.TrimSpace(in.Text)
 	p := Parsed{Category: model.CatInbox, CategoryBy: model.ByAI, Level: model.LevelLight, Text: text}
-	p.Labels = model.NormalizeTags(keywordLabels(text, rules.Prefixes))
+	p.Labels = model.NormalizeTags(append(keywordLabels(text, rules.Prefixes), ruleLabels(text, rules.LabelRules)...))
 	if cat, rest, ok := matchKeyword(text, rules.Prefixes); ok {
 		p.Category, p.CategoryBy, p.Text = cat, model.ByPrefix, rest
 	} else if text == "" && in.HasImage && !aiImages {

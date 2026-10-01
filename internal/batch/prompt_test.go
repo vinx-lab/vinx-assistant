@@ -12,17 +12,17 @@ import (
 
 func TestSystemPrompt(t *testing.T) {
 	now := clock.At(2026, 10, 1, 9, 0)
-	p := systemPrompt(model.LevelDeep, now, []string{"发票", "Go"})
+	p := systemPrompt("", model.LevelDeep, now, []string{"发票", "Go"}, nil)
 	for _, want := range []string{"2026-10-01 09:00", "星期四", "Asia/Shanghai", "发票、Go", "fixed_category", "## 是什么", "## 同类对比", "## 上手步骤", `"detail"`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("deep prompt missing %q", want)
 		}
 	}
-	light := systemPrompt(model.LevelLight, now, nil)
+	light := systemPrompt("", model.LevelLight, now, nil, nil)
 	if strings.Contains(light, `"detail"`) || strings.Contains(light, "已有标签") {
 		t.Errorf("light prompt has detail/tags: %s", light)
 	}
-	if !strings.Contains(systemPrompt(model.LevelMedium, now, nil), "值不值得") {
+	if !strings.Contains(systemPrompt("", model.LevelMedium, now, nil, nil), "值不值得") {
 		t.Error("medium prompt must ask whether worth reading")
 	}
 }
@@ -66,7 +66,7 @@ func TestEstimateAndBudget(t *testing.T) {
 
 func TestBuildRequest(t *testing.T) {
 	now := clock.At(2026, 10, 1, 9, 0)
-	req := buildRequest(model.LevelLight, now, nil, []promptItem{{ID: 1}, {ID: 2}}, []string{"data:image/jpeg;base64,AA"}, "m")
+	req := buildRequest("", model.LevelLight, now, nil, nil, []promptItem{{ID: 1}, {ID: 2}}, []string{"data:image/jpeg;base64,AA"}, "m")
 	if req.Model != "m" || len(req.Messages) != 2 || req.MaxTokens != maxTokens(model.LevelLight, 2) {
 		t.Fatalf("req = %+v", req)
 	}
@@ -77,7 +77,7 @@ func TestBuildRequest(t *testing.T) {
 
 func TestPromptUsesShanghaiTime(t *testing.T) {
 	utc := time.Date(2026, 10, 1, 17, 0, 0, 0, time.UTC)
-	p := systemPrompt(model.LevelLight, utc, nil)
+	p := systemPrompt("", model.LevelLight, utc, nil, nil)
 	if !strings.Contains(p, "2026-10-02 01:00 星期五") {
 		t.Fatalf("prompt = %s", p)
 	}

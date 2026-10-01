@@ -16,6 +16,13 @@ type Rules struct {
 	MediumKeywords []string     `json:"medium_keywords"`
 	DeepKeywords   []string     `json:"deep_keywords"`
 	ActionWords    []ActionWord `json:"action_words"`
+	LabelRules     []LabelRule  `json:"label_rules"`
+}
+
+// LabelRule 是标签关键词：消息任何位置出现 Keyword（忽略大小写）就打上 Label 类别标签，不改分类。
+type LabelRule struct {
+	Keyword string `json:"keyword"`
+	Label   string `json:"label"`
 }
 
 type Schedule struct {
@@ -69,6 +76,8 @@ type Settings struct {
 	Rules    Rules    `json:"rules"`
 	Schedule Schedule `json:"schedule"`
 	AI       AI       `json:"ai"`
+	// Prompt 是整理提示词里可编辑的说明部分；空串表示用 batch.DefaultPrompt。
+	Prompt string `json:"-"`
 }
 
 func DefaultSettings() Settings {

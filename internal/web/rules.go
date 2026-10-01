@@ -157,6 +157,37 @@ func FormatPrefixes(rules []model.PrefixRule) string {
 	return b.String()
 }
 
+// ParseLabelRules 解析标签关键词「关键词=标签」，每行一条；同一关键词可对应多个标签，完全相同的行去重。
+func ParseLabelRules(text string) ([]model.LabelRule, error) {
+	seen := map[string]bool{}
+	var out []model.LabelRule
+	for i, l := range lines(text) {
+		k, v, ok := splitPair(l)
+		if !ok || k == "" || v == "" {
+			return nil, fmt.Errorf("标签关键词第 %d 行「%s」应写成「关键词=标签」", i+1, l)
+		}
+		tags := model.NormalizeTags([]string{v})
+		if len(tags) != 1 {
+			return nil, fmt.Errorf("标签关键词第 %d 行：标签「%s」不合法", i+1, v)
+		}
+		key := strings.ToLower(k) + "|" + strings.ToLower(tags[0])
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, model.LabelRule{Keyword: k, Label: tags[0]})
+	}
+	return out, nil
+}
+
+func FormatLabelRules(rules []model.LabelRule) string {
+	var b strings.Builder
+	for _, r := range rules {
+		fmt.Fprintf(&b, "%s=%s\n", r.Keyword, r.Label)
+	}
+	return b.String()
+}
+
 func FormatActionWords(words []model.ActionWord) string {
 	var b strings.Builder
 	for _, w := range words {

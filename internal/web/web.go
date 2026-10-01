@@ -94,6 +94,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	get("/usage", s.usage)
 	get("/settings", s.settingsPage)
 	post("/settings/general", s.settingsGeneral)
+	post("/settings/prompt", s.settingsPrompt)
 	post("/settings/models", s.settingsModels)
 	post("/settings/providers", s.providerSave)
 	post("/settings/providers/{id}/delete", s.providerDelete)

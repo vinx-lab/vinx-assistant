@@ -11,6 +11,7 @@ import (
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
+	"github.com/vinx-lab/vinx-assistant/internal/store"
 )
 
 func TestRelTime(t *testing.T) {
@@ -32,7 +33,7 @@ func TestBoardRendersStatusTabsAndCards(t *testing.T) {
 	past, today := clock.At(2026, 9, 30, 10, 0), clock.At(2026, 10, 1, 18, 0)
 	e.item(t, &model.Item{MsgID: "1", RawText: "交房租", Category: model.CatTodo, DueAt: &past, DueHasTime: true})
 	id := e.item(t, &model.Item{MsgID: "2", RawText: "交发票", Category: model.CatTodo, DueAt: &today, DueHasTime: true, Summary: "报销"})
-	e.st.SetTags(ctx, id, []string{"财务"})
+	e.st.SetTags(ctx, id, store.TagKindTopic, []string{"财务"})
 	e.st.SetKV(ctx, "ilink.drift", `{"msg.new_field":1}`)
 	code, body := e.get(t, "/")
 	if code != http.StatusOK {

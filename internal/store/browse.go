@@ -68,11 +68,10 @@ func (s *Store) ListItems(ctx context.Context, q ListQuery) ([]model.Item, error
 
 func (s *Store) fillTags(ctx context.Context, items []model.Item) error {
 	for i := range items {
-		tags, err := loadTags(ctx, s.db, items[i].ID)
-		if err != nil {
+		var err error
+		if items[i].Labels, items[i].Topics, err = loadTags(ctx, s.db, items[i].ID); err != nil {
 			return err
 		}
-		items[i].Tags = tags
 	}
 	return nil
 }

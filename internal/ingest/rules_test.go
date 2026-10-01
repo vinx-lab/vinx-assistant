@@ -98,6 +98,21 @@ func TestIsCommand(t *testing.T) {
 	}
 }
 
+func TestClassifyLabelRules(t *testing.T) {
+	rules := model.DefaultSettings().Rules
+	rules.LabelRules = []model.LabelRule{{Keyword: "测试", Label: "测试"}, {Keyword: "发票", Label: "票据"}, {Keyword: "OpenAI", Label: "AI"}, {Keyword: "", Label: "空"}}
+	got := Classify(Input{Text: "这个待办要测试 openai 的发票"}, rules, false)
+	if got.Category != model.CatTodo {
+		t.Errorf("label rules must not change the category rules: %s", got.Category)
+	}
+	if want := []string{"待办", "测试", "票据", "AI"}; !reflect.DeepEqual(got.Labels, want) {
+		t.Errorf("labels = %q, want %q", got.Labels, want)
+	}
+	if got := Classify(Input{Text: "没有命中"}, rules, false); got.Category != model.CatInbox || got.Labels != nil {
+		t.Errorf("no hit: %+v", got)
+	}
+}
+
 func TestClassifyIgnoresInvalidCategoryPrefix(t *testing.T) {
 	rules := model.Rules{Prefixes: []model.PrefixRule{{Prefix: "乱", Category: "bogus"}, {Prefix: "待办", Category: model.CatTodo}}}
 	p := Classify(Input{Text: "乱：x"}, rules, false)

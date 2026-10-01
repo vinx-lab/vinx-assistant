@@ -30,7 +30,7 @@
   {{if .Tag}}<span>标签「{{.Tag}}」</span><a href="{{.ClearTagHref}}">清除筛选</a>{{end}}
 </div>
 {{end}}
-{{if .Tags}}<div class="tags" aria-label="标签">{{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
+{{if or .Labels .Topics}}<div class="tags" aria-label="标签">{{range .Labels}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}{{range .Topics}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
 
 <div class="list">
 {{range .Items}}
@@ -43,7 +43,7 @@
         <span class="badge st">{{statusName .Status}}</span>
         {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
         {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}</span>{{end}}
-        {{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
+        {{range .Labels}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
       </p>
       {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a></p>{{end}}
     </div>

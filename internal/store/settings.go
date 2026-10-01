@@ -9,7 +9,7 @@ import (
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
 
-// LoadSettings 读 rules、schedule、ai 三个键；缺失的部分用默认值。
+// LoadSettings 读 rules、schedule、ai、prompt 四个键（prompt 是纯文本）；缺失的部分用默认值。
 func (s *Store) LoadSettings(ctx context.Context) (model.Settings, error) {
 	st := model.DefaultSettings()
 	targets := map[string]any{"rules": &st.Rules, "schedule": &st.Schedule, "ai": &st.AI}
@@ -26,6 +26,12 @@ func (s *Store) LoadSettings(ctx context.Context) (model.Settings, error) {
 			return st, err
 		}
 	}
+	var prompt string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'prompt'`).Scan(&prompt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return st, err
+	}
+	st.Prompt = prompt
 	return st, nil
 }
 
@@ -41,6 +47,7 @@ func (s *Store) SaveSettings(ctx context.Context, st model.Settings) error {
 				return err
 			}
 		}
-		return nil
+		_, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('prompt', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, st.Prompt)
+		return err
 	})
 }

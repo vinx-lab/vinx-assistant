@@ -149,12 +149,26 @@ func TestHandleTextWithPrefixAndAck(t *testing.T) {
 	}
 }
 
+func TestHandleLabelRuleStoredAsLabel(t *testing.T) {
+	e := newEnv(t, nil)
+	st, _ := e.st.LoadSettings(context.Background())
+	st.Rules.LabelRules = []model.LabelRule{{Keyword: "测试", Label: "测试"}}
+	if err := e.st.SaveSettings(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "帮我测试一下这个"))
+	it := e.item(t, 1)
+	if !reflect.DeepEqual(it.Labels, []string{"测试"}) || len(it.Topics) != 0 || it.Category != model.CatInbox {
+		t.Fatalf("cat=%s labels=%v topics=%v", it.Category, it.Labels, it.Topics)
+	}
+}
+
 func TestHandleKeywordsBecomeTags(t *testing.T) {
 	e := newEnv(t, nil)
 	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "这个想法也算待办"))
 	it := e.item(t, 1)
-	if !reflect.DeepEqual(it.Tags, []string{"待办", "点子"}) || it.Category != model.CatIdea {
-		t.Fatalf("cat=%s tags=%v", it.Category, it.Tags)
+	if !reflect.DeepEqual(it.Labels, []string{"待办", "点子"}) || it.Category != model.CatIdea {
+		t.Fatalf("cat=%s tags=%v", it.Category, it.Labels)
 	}
 }
 
@@ -693,7 +707,7 @@ func TestSaveTextAsItem(t *testing.T) {
 	if it.RawText != "周末整理照片 https://example.com/p 这个想法" || it.URL != "https://example.com/p" {
 		t.Fatalf("text=%q url=%q", it.RawText, it.URL)
 	}
-	if got := e.item(t, it.ID).Tags; !reflect.DeepEqual(got, []string{"待办", "点子"}) {
+	if got := e.item(t, it.ID).Labels; !reflect.DeepEqual(got, []string{"待办", "点子"}) {
 		t.Fatalf("tags = %v", got)
 	}
 	enr.mu.Lock()

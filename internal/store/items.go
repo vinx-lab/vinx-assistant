@@ -38,21 +38,25 @@ func scanItem(sc scanner) (*model.Item, error) {
 	return &it, nil
 }
 
-func loadTags(ctx context.Context, q querier, itemID int64) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT t.name FROM item_tags x JOIN tags t ON t.id = x.tag_id WHERE x.item_id = ? ORDER BY t.name`, itemID)
+// loadTags 读条目上的标签，分成类别标签和内容标签。
+func loadTags(ctx context.Context, q querier, itemID int64) (labels, topics []string, err error) {
+	rows, err := q.QueryContext(ctx, `SELECT t.name, t.kind FROM item_tags x JOIN tags t ON t.id = x.tag_id WHERE x.item_id = ? ORDER BY t.name`, itemID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	var tags []string
 	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
+		var n, k string
+		if err := rows.Scan(&n, &k); err != nil {
+			return nil, nil, err
 		}
-		tags = append(tags, n)
+		if k == TagKindLabel {
+			labels = append(labels, n)
+		} else {
+			topics = append(topics, n)
+		}
 	}
-	return tags, rows.Err()
+	return labels, topics, rows.Err()
 }
 
 func fillDefaults(it *model.Item) {
@@ -119,7 +123,7 @@ func (s *Store) GetItem(ctx context.Context, id int64) (*model.Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	it.Tags, err = loadTags(ctx, s.db, id)
+	it.Labels, it.Topics, err = loadTags(ctx, s.db, id)
 	return it, err
 }
 
@@ -168,7 +172,7 @@ func (s *Store) modifyTx(ctx context.Context, tx *sql.Tx, id int64, fn func(it *
 	if err != nil {
 		return nil, err
 	}
-	if it.Tags, err = loadTags(ctx, tx, id); err != nil {
+	if it.Labels, it.Topics, err = loadTags(ctx, tx, id); err != nil {
 		return nil, err
 	}
 	if err := fn(it); err != nil {

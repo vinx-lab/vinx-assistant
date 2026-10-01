@@ -27,7 +27,7 @@ func seedBrowse(t *testing.T) (*Store, *clock.Fake) {
 		}
 		fc.Advance(time.Hour)
 	}
-	if err := st.SetTags(ctx, 4, []string{"前端"}); err != nil {
+	if err := st.SetTags(ctx, 4, TagKindTopic, []string{"前端"}); err != nil {
 		t.Fatal(err)
 	}
 	return st, fc
@@ -56,7 +56,7 @@ func TestListItemsAndCounts(t *testing.T) {
 		t.Fatalf("done todos = %v", got)
 	}
 	tagged, _ := st.ListItems(ctx, ListQuery{Category: model.CatResearch, Tag: "前端"})
-	if len(tagged) != 1 || tagged[0].Tags[0] != "前端" {
+	if len(tagged) != 1 || tagged[0].Topics[0] != "前端" {
 		t.Fatalf("tagged = %+v", tagged)
 	}
 	// 点子、资料在默认视图里总是列出（状态 kept 不算「没处理完」，但它们是参考材料）

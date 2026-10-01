@@ -170,10 +170,10 @@ func TestApplyKeepsFixedCategory(t *testing.T) {
 }
 
 func TestApplyLeavesTagsAndResetsAttempts(t *testing.T) {
-	it := &model.Item{CategoryBy: model.ByManual, Category: model.CatIdea, Status: model.StatusKept, Tags: []string{"点子", "我的"}, ProcessError: "e", ProcessAttempts: 2, Title: "旧", RawText: "原文"}
+	it := &model.Item{CategoryBy: model.ByManual, Category: model.CatIdea, Status: model.StatusKept, Labels: []string{"点子", "我的"}, ProcessError: "e", ProcessAttempts: 2, Title: "旧", RawText: "原文"}
 	apply(it, Result{Category: model.CatTodo, Tags: []string{"ai"}}, model.LevelLight)
-	if strings.Join(it.Tags, ",") != "点子,我的" {
-		t.Fatalf("tags = %v", it.Tags)
+	if strings.Join(it.Labels, ",") != "点子,我的" {
+		t.Fatalf("tags = %v", it.Labels)
 	}
 	if it.ProcessAttempts != 0 || it.ProcessError != "" || it.RawText != "原文" || it.Category != model.CatIdea {
 		t.Fatalf("it = %+v", it)

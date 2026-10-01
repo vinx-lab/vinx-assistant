@@ -11,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/vinx-lab/vinx-assistant/internal/batch"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/redact"
 )
@@ -20,7 +22,7 @@ import (
 type generalForm struct {
 	TokenLimit, BatchTimes, DigestTime  string
 	Images                              bool
-	Prefixes, Medium, Deep, ActionWords string
+	Prefixes, LabelRules, Medium, Deep, ActionWords string
 }
 
 func generalFormOf(st model.Settings) generalForm {
@@ -30,6 +32,7 @@ func generalFormOf(st model.Settings) generalForm {
 		DigestTime:  st.Schedule.DigestTime,
 		Images:      st.AI.Images,
 		Prefixes:    FormatPrefixes(st.Rules.Prefixes),
+		LabelRules:  FormatLabelRules(st.Rules.LabelRules),
 		Medium:      strings.Join(st.Rules.MediumKeywords, "\n"),
 		Deep:        strings.Join(st.Rules.DeepKeywords, "\n"),
 		ActionWords: FormatActionWords(st.Rules.ActionWords),
@@ -58,9 +61,13 @@ func applyGeneral(st *model.Settings, f generalForm) error {
 	if err != nil {
 		return err
 	}
+	labelRules, err := ParseLabelRules(f.LabelRules)
+	if err != nil {
+		return err
+	}
 	st.AI.DailyTokenLimit, st.AI.Images = limit, f.Images
 	st.Schedule.BatchTimes, st.Schedule.DigestTime = times, digest
-	st.Rules.Prefixes, st.Rules.ActionWords = prefixes, words
+	st.Rules.Prefixes, st.Rules.ActionWords, st.Rules.LabelRules = prefixes, words, labelRules
 	st.Rules.MediumKeywords, st.Rules.DeepKeywords = ParseWords(f.Medium), ParseWords(f.Deep)
 	return nil
 }
@@ -76,6 +83,10 @@ type settingsData struct {
 	Providers []providerView
 	AI        model.AI
 	Levels    []levelView
+	// LabelRules 是标签关键词的文本（每行「关键词=标签」），Prompt 是当前提示词说明（空则填默认），PromptPreview 是最终发给 AI 的完整提示词。
+	LabelRules    string
+	Prompt        string
+	PromptPreview string
 }
 
 type levelView struct {
@@ -108,6 +119,14 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status i
 		p, _ := st.AI.Provider(ref.ProviderID)
 		d.Levels = append(d.Levels, levelView{Level: l.lv, Name: l.name, ProviderID: ref.ProviderID, Model: ref.Model, Options: modelOptions(p.Models, ref.Model)})
 	}
+	d.LabelRules = g.LabelRules
+	d.Prompt = st.Prompt
+	if strings.TrimSpace(d.Prompt) == "" {
+		d.Prompt = batch.DefaultPrompt
+	}
+	if topics, labels, err := batch.PromptTags(r.Context(), s.d.Store, st); err == nil {
+		d.PromptPreview = batch.PreviewPrompt(st, s.d.Clock.Now(), topics, labels, model.LevelLight)
+	}
 	d.AI.Providers = nil // 模板里只用 Providers（已打码），不把密钥放进模板数据
 	s.render(w, status, "settings", d)
 }
@@ -129,11 +148,39 @@ func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	}
 	f := generalForm{TokenLimit: r.FormValue("token_limit"), BatchTimes: r.FormValue("batch_times"), DigestTime: r.FormValue("digest_time"),
 		Images: r.FormValue("images") == "1", Prefixes: r.FormValue("prefixes"), Medium: r.FormValue("medium_keywords"),
-		Deep: r.FormValue("deep_keywords"), ActionWords: r.FormValue("action_words")}
+		LabelRules: r.FormValue("label_rules"), Deep: r.FormValue("deep_keywords"), ActionWords: r.FormValue("action_words")}
 	if err := applyGeneral(&st, f); err != nil {
 		s.renderSettings(w, r, http.StatusBadRequest, st, f, err.Error())
 		return
 	}
+	if err := s.d.Store.SaveSettings(r.Context(), st); err != nil {
+		s.fail(w, err)
+		return
+	}
+	redirect(w, r, "/settings?msg=saved")
+}
+
+// maxPromptRunes 是提示词说明的长度上限，防止误贴大段文字撑爆每次请求。
+const maxPromptRunes = 4000
+
+// settingsPrompt 保存整理提示词的说明部分；reset=1 或留空恢复默认。
+func (s *Server) settingsPrompt(w http.ResponseWriter, r *http.Request) {
+	st, err := s.d.Store.LoadSettings(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	prompt := strings.TrimSpace(strings.ReplaceAll(r.FormValue("prompt"), "\r\n", "\n"))
+	if r.FormValue("reset") == "1" || prompt == strings.TrimSpace(batch.DefaultPrompt) {
+		prompt = ""
+	}
+	if utf8.RuneCountInString(prompt) > maxPromptRunes {
+		saved := st
+		st.Prompt = prompt // 只用于回显，不保存
+		s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(saved), "提示词太长（上限 "+strconv.Itoa(maxPromptRunes)+" 字）")
+		return
+	}
+	st.Prompt = prompt
 	if err := s.d.Store.SaveSettings(r.Context(), st); err != nil {
 		s.fail(w, err)
 		return

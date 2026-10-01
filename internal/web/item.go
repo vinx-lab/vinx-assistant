@@ -13,7 +13,7 @@ import (
 )
 
 type editForm struct {
-	Category, Tags, DueDate, DueTime, Priority string
+	Category, Labels, Topics, DueDate, DueTime, Priority string
 }
 
 func splitTags(s string) []string {
@@ -22,34 +22,34 @@ func splitTags(s string) []string {
 	})
 }
 
-// applyEdit 把详情页表单写进条目，返回规范化后的标签。出错时不修改条目。
+// applyEdit 把详情页表单写进条目，返回规范化后的类别标签和内容标签。出错时不修改条目。
 // 不允许手动把已整理的条目改回「未整理」：批处理会一直重新处理它（计划 2 评审结论）。
-func applyEdit(it *model.Item, f editForm) ([]string, error) {
+func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) {
 	cat := model.Category(f.Category)
 	if !model.ValidCategory(cat) {
-		return nil, badInput{"分类不对"}
+		return nil, nil, badInput{"分类不对"}
 	}
 	if cat == model.CatInbox && it.Category != model.CatInbox {
-		return nil, badInput{"不能手动改回未整理"}
+		return nil, nil, badInput{"不能手动改回未整理"}
 	}
 	prio := model.Priority(f.Priority)
 	if _, ok := priorityNames[prio]; !ok {
-		return nil, badInput{"优先级不对"}
+		return nil, nil, badInput{"优先级不对"}
 	}
 	var due *time.Time
 	hasTime := false
 	switch {
 	case f.DueDate == "" && f.DueTime != "":
-		return nil, badInput{"填了时刻就要填日期"}
+		return nil, nil, badInput{"填了时刻就要填日期"}
 	case f.DueDate != "":
 		d, err := time.ParseInLocation("2006-01-02", f.DueDate, clock.Zone)
 		if err != nil {
-			return nil, badInput{"日期格式不对"}
+			return nil, nil, badInput{"日期格式不对"}
 		}
 		if f.DueTime != "" {
 			hm, err := time.ParseInLocation("15:04", f.DueTime, clock.Zone)
 			if err != nil {
-				return nil, badInput{"时刻格式不对"}
+				return nil, nil, badInput{"时刻格式不对"}
 			}
 			d = d.Add(time.Duration(hm.Hour())*time.Hour + time.Duration(hm.Minute())*time.Minute)
 			hasTime = true
@@ -63,7 +63,7 @@ func applyEdit(it *model.Item, f editForm) ([]string, error) {
 		}
 	}
 	it.Priority, it.DueAt, it.DueHasTime = prio, due, hasTime
-	return model.NormalizeTags(splitTags(f.Tags)), nil
+	return model.NormalizeTags(splitTags(f.Labels)), model.NormalizeTags(splitTags(f.Topics)), nil
 }
 
 type itemData struct {
@@ -76,7 +76,7 @@ type itemData struct {
 }
 
 func formOf(it *model.Item) editForm {
-	f := editForm{Category: string(it.Category), Tags: strings.Join(it.Tags, "、"), Priority: string(it.Priority)}
+	f := editForm{Category: string(it.Category), Labels: strings.Join(it.Labels, "、"), Topics: strings.Join(it.Topics, "、"), Priority: string(it.Priority)}
 	if it.DueAt != nil {
 		f.DueDate = it.DueAt.In(clock.Zone).Format("2006-01-02")
 		if it.DueHasTime {
@@ -128,17 +128,17 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := editForm{Category: r.FormValue("category"), Tags: r.FormValue("tags"), DueDate: r.FormValue("due_date"),
+	f := editForm{Category: r.FormValue("category"), Labels: r.FormValue("labels"), Topics: r.FormValue("topics"), DueDate: r.FormValue("due_date"),
 		DueTime: r.FormValue("due_time"), Priority: r.FormValue("priority")}
 	// 表单带着打开页面时条目的 updated_at；对不上（或缺失）说明期间被改过，整表提交会覆盖那些改动，拒绝
 	seen, perr := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)
-	var tags []string
+	var labels, topics []string
 	_, err := s.d.Store.ModifyItem(r.Context(), id, func(it *model.Item) error {
 		if perr != nil || it.UpdatedAt.Unix() != seen {
 			return errStale
 		}
 		var err error
-		tags, err = applyEdit(it, f)
+		labels, topics, err = applyEdit(it, f)
 		return err
 	})
 	var bad badInput
@@ -161,7 +161,12 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.d.Store.SetTags(r.Context(), id, tags); err != nil {
+	// 先写类别标签再写内容标签：同名时类别标签优先，内容标签里的同名项被跳过
+	if err := s.d.Store.SetTags(r.Context(), id, store.TagKindLabel, labels); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.d.Store.SetTags(r.Context(), id, store.TagKindTopic, topics); err != nil {
 		s.fail(w, err)
 		return
 	}

@@ -147,7 +147,8 @@ type Item struct {
 	ProcessAttempts int
 	TokensUsed      int64
 	RawJSON         string
-	Tags            []string
+	Labels          []string // 类别标签：关键词规则产生
+	Topics          []string // 内容标签：AI 生成
 }
 
 // DisplayTitle 依次取标题、网页标题、原文首行前 30 个字，都没有时用编号。

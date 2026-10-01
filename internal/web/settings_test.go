@@ -103,6 +103,56 @@ func TestSettingsValidation(t *testing.T) {
 	}
 }
 
+func TestSettingsPromptSaveAndReset(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	if resp, _ := e.post(t, "/settings/prompt", url.Values{"prompt": {"自定义说明ABC"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save prompt: %d", resp.StatusCode)
+	}
+	st, _ := e.st.LoadSettings(ctx)
+	if st.Prompt != "自定义说明ABC" {
+		t.Fatalf("prompt = %q", st.Prompt)
+	}
+	// 恢复默认
+	if resp, _ := e.post(t, "/settings/prompt", url.Values{"prompt": {"自定义说明ABC"}, "reset": {"1"}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("reset prompt: %d", resp.StatusCode)
+	}
+	if st, _ = e.st.LoadSettings(ctx); st.Prompt != "" {
+		t.Fatalf("prompt after reset = %q", st.Prompt)
+	}
+	// 留空也回落默认
+	e.post(t, "/settings/prompt", url.Values{"prompt": {"x"}})
+	e.post(t, "/settings/prompt", url.Values{"prompt": {"  "}})
+	if st, _ = e.st.LoadSettings(ctx); st.Prompt != "" {
+		t.Fatalf("blank prompt saved as %q", st.Prompt)
+	}
+	// 过长拒绝
+	if resp, _ := e.post(t, "/settings/prompt", url.Values{"prompt": {strings.Repeat("长", maxPromptRunes+1)}}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("too long prompt: %d", resp.StatusCode)
+	}
+}
+
+func TestSettingsLabelRules(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	st, _ := e.st.LoadSettings(ctx)
+	form := generalFormOf(st)
+	form.LabelRules = "测试=测试\n发票＝票据"
+	v := url.Values{"token_limit": {form.TokenLimit}, "batch_times": {form.BatchTimes}, "digest_time": {form.DigestTime}, "prefixes": {form.Prefixes},
+		"action_words": {form.ActionWords}, "label_rules": {form.LabelRules}}
+	if resp, _ := e.post(t, "/settings/general", v); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save: %d", resp.StatusCode)
+	}
+	st, _ = e.st.LoadSettings(ctx)
+	if len(st.Rules.LabelRules) != 2 || st.Rules.LabelRules[1] != (model.LabelRule{Keyword: "发票", Label: "票据"}) {
+		t.Fatalf("rules = %+v", st.Rules.LabelRules)
+	}
+	v.Set("label_rules", "没有等号")
+	if resp, body := e.post(t, "/settings/general", v); resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "关键词=标签") {
+		t.Fatalf("bad rule: %d", resp.StatusCode)
+	}
+}
+
 // 网站没有密码：改了服务商地址却留空密钥，会把旧密钥发到新地址，必须拒绝。
 func TestProviderBaseURLChangeRequiresKey(t *testing.T) {
 	e := newEnv(t)

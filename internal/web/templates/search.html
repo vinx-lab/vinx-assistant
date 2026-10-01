@@ -25,7 +25,7 @@
       <span class="badge st">{{catName .Category}}</span>
       <span class="badge st">{{statusName .Status}}</span>
       <span class="badge">{{fmtTime .CreatedAt}}</span>
-      {{range .Tags}}<span class="tag">#{{.}}</span>{{end}}
+      {{range .Labels}}<span class="tag">{{.}}</span>{{end}}{{range .Topics}}<span class="tag">#{{.}}</span>{{end}}
     </p>
   </div>
 </article>

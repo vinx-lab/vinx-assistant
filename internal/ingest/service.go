@@ -376,7 +376,7 @@ func (s *Service) addLabels(ctx context.Context, itemID int64, labels []string) 
 	if len(labels) == 0 {
 		return
 	}
-	if err := s.Store.AddTags(ctx, itemID, labels); err != nil {
+	if err := s.Store.AddTags(ctx, itemID, store.TagKindLabel, labels); err != nil {
 		s.Log.Warn("关键词标签写入失败", "item_id", itemID, "err", err)
 	}
 }
