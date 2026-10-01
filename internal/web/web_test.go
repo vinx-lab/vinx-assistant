@@ -28,6 +28,7 @@ type env struct {
 	sess  *session.Session
 	ilink *ilinktest.Server
 	srv   *httptest.Server
+	media string // 媒体目录（<tmp>/media）
 }
 
 func newEnv(t *testing.T) *env {
@@ -44,8 +45,9 @@ func newEnv(t *testing.T) *env {
 	e.sess = session.New(e.st, nil, e.clk)
 	e.ilink = ilinktest.New()
 	t.Cleanup(e.ilink.Close)
+	e.media = filepath.Join(dir, "media")
 	d := Deps{
-		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: filepath.Join(dir, "media"),
+		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: e.media,
 		ListModels: func(ctx context.Context, p model.Provider) ([]string, error) {
 			if p.Name == "坏的" {
 				return nil, errors.New("HTTP 401: invalid key " + p.APIKey)

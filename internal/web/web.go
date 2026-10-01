@@ -95,6 +95,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	post("/login/verify", s.loginVerify)
 	get("/login/status", s.loginStatus)
 	get("/login/qr.png", s.loginQR)
+	get("/media/{path...}", s.media)
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", secure(http.StripPrefix("/static/", http.FileServerFS(sub))))
 }
