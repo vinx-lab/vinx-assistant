@@ -29,6 +29,8 @@ const usageText = `用法：vinx-assistant <子命令> [参数]
   login    在终端扫码登录微信 ClawBot
   batch    立即跑一次 AI 整理（服务运行中也可以，两边不会重复整理）
   backup   导出数据库快照和附件（服务运行中也可以）
+  password 设置或重置网页密码（服务运行中也可以）；所有登录随之失效
+             --stdin 从标准输入读一行作为新密码，--clear 清除密码
   version  显示版本
 
 通用参数：--data 数据目录（VINX_DATA），serve 另有 --listen（VINX_LISTEN）
@@ -74,6 +76,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "login":
 		return cmdLogin(ctx, args[1:], os.Stdin, stdout, stderr)
+	case "password":
+		return cmdPassword(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "batch":
 		fs := flag.NewFlagSet("batch", flag.ContinueOnError)
 		fs.SetOutput(stderr)
