@@ -1,7 +1,10 @@
 package ingest
 
 import (
+	_ "modernc.org/sqlite"
+
 	"context"
+	"database/sql"
 	"log/slog"
 	"strings"
 	"sync"
@@ -104,3 +107,68 @@ type syncBuf struct {
 
 func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
 func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+// breakSeen 用第二个连接删掉 seen_msgs 表，让 Handle 的第一步（Store.Seen）真实失败，
+// 而游标、凭证等 kv 读写不受影响。
+func breakSeen(t *testing.T, e *env) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DROP TABLE seen_msgs`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func startLoggedPoller(t *testing.T, e *env) (*syncBuf, func()) {
+	t.Helper()
+	logs := &syncBuf{}
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &Poller{Session: e.sess, Service: e.svc, Store: e.st, Log: slog.New(slog.NewTextHandler(logs, nil)),
+		RetryDelay: 5 * time.Millisecond, BackoffDelay: 5 * time.Millisecond, IdleDelay: 5 * time.Millisecond}
+	done := make(chan struct{})
+	go func() { p.Run(ctx); close(done) }()
+	return logs, func() { cancel(); <-done }
+}
+
+func TestPollerDoesNotAdvanceCursorWhenHandleFails(t *testing.T) {
+	e := newEnv(t, nil)
+	breakSeen(t, e)
+	logs, stop := startLoggedPoller(t, e)
+	defer stop()
+	e.srv.Push(ilinktest.TextMsg(1, ilinktest.OwnerID, "hello"))
+	eventually(t, func() bool { return strings.Contains(logs.String(), "游标不推进") })
+	time.Sleep(50 * time.Millisecond)
+	if v, ok, _ := e.st.GetKV(context.Background(), keyBuf); ok && v != "" {
+		t.Fatalf("cursor advanced to %q despite handle failure", v)
+	}
+}
+
+func TestPollerSkipsPoisonBatchAfterRepeatedFailures(t *testing.T) {
+	e := newEnv(t, nil)
+	breakSeen(t, e)
+	logs, stop := startLoggedPoller(t, e)
+	defer stop()
+	// 假服务器不会按游标重发，这里模拟上游重发：每次游标仍为空就再推一遍。
+	pushes := 0
+	eventually(t, func() bool {
+		if v, ok, _ := e.st.GetKV(context.Background(), keyBuf); ok && v != "" {
+			return true
+		}
+		e.srv.Push(ilinktest.TextMsg(7, ilinktest.OwnerID, "poison"))
+		pushes++
+		return false
+	})
+	if pushes < maxBatchFailures {
+		t.Fatalf("cursor saved after only %d failing batches", pushes)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "多次处理失败，跳过这批消息") || !strings.Contains(out, "msg_ids=[7]") {
+		t.Fatalf("missing skip error: %s", out)
+	}
+	if strings.Contains(out, "poison") {
+		t.Fatalf("message text leaked: %s", out)
+	}
+}

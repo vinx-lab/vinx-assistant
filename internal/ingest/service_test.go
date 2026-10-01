@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,19 +23,21 @@ import (
 )
 
 type env struct {
-	srv   *ilinktest.Server
-	st    *store.Store
-	sess  *session.Session
-	clk   *clock.Fake
-	svc   *Service
-	media string
+	srv    *ilinktest.Server
+	st     *store.Store
+	sess   *session.Session
+	clk    *clock.Fake
+	svc    *Service
+	media  string
+	dbPath string
 }
 
 func newEnv(t *testing.T, mod func(*Deps)) *env {
 	t.Helper()
 	srv := ilinktest.New()
 	t.Cleanup(srv.Close)
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +55,7 @@ func newEnv(t *testing.T, mod func(*Deps)) *env {
 	if mod != nil {
 		mod(&d)
 	}
-	return &env{srv: srv, st: st, sess: sess, clk: clk, svc: New(d), media: d.MediaDir}
+	return &env{srv: srv, st: st, sess: sess, clk: clk, svc: New(d), media: d.MediaDir, dbPath: dbPath}
 }
 
 func (e *env) handle(t *testing.T, raw string) {
@@ -334,5 +337,57 @@ func TestFileWithoutKeyFailsImmediately(t *testing.T) {
 	atts, _ := e.st.ListAttachments(context.Background(), 1)
 	if len(atts) != 1 || atts[0].State != "failed" {
 		t.Fatalf("att = %+v", atts)
+	}
+}
+
+func TestOwnerWithoutUserIDRejected(t *testing.T) {
+	e := newEnv(t, nil)
+	c := e.srv.Cred()
+	c.UserID = ""
+	if err := e.sess.SaveCred(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "hi"))
+	if _, err := e.st.GetItem(context.Background(), 1); err == nil {
+		t.Fatal("message accepted although cred has no user id")
+	}
+}
+
+func TestCommandErrorReplyIsGeneric(t *testing.T) {
+	e := newEnv(t, func(d *Deps) { d.Commands = errCmd{} })
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "完成 12"))
+	sent := e.srv.Sent()
+	if len(sent) != 1 || sent[0].Text != "指令执行失败，请稍后再试" {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+type errCmd struct{}
+
+func (errCmd) Handle(context.Context, CommandInput) (string, bool, error) {
+	return "", false, errors.New("secret internal detail")
+}
+
+func TestRetryAttachmentsDuringPauseKeepsAttempts(t *testing.T) {
+	e := newEnv(t, nil)
+	key := []byte("0123456789abcdef")
+	e.handle(t, ilinktest.ImageMsg(1, ilinktest.OwnerID, "later", key))
+	if err := e.sess.Pause(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		e.svc.RetryAttachments(context.Background())
+	}
+	atts, _ := e.st.ListAttachments(context.Background(), 1)
+	if atts[0].State != "pending" || atts[0].Attempts != 1 {
+		t.Fatalf("att during pause = %+v", atts[0])
+	}
+	enc, _ := ilink.EncryptECB([]byte("\xff\xd8\xff ok"), key)
+	e.srv.AddMedia("later", enc)
+	e.clk.Advance(session.PauseDuration)
+	e.svc.RetryAttachments(context.Background())
+	atts, _ = e.st.ListAttachments(context.Background(), 1)
+	if atts[0].State != "ok" {
+		t.Fatalf("after resume = %+v", atts[0])
 	}
 }

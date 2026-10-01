@@ -131,7 +131,11 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	if err != nil {
 		return err
 	}
-	if cred.UserID != "" && m.FromUserID != cred.UserID {
+	if cred.UserID == "" {
+		s.Log.Warn("凭证缺少 ilink_user_id，拒收消息，请重新登录")
+		return nil
+	}
+	if m.FromUserID != cred.UserID {
 		s.Log.Warn("忽略非主人的消息", "msg_id", m.ID())
 		return nil
 	}
@@ -157,7 +161,7 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 		reply, handled, err := s.Commands.Handle(ctx, in)
 		if err != nil {
 			s.Log.Error("指令执行失败", "msg_id", id, "err", err)
-			reply, handled = "指令执行失败："+err.Error(), true
+			reply, handled = "指令执行失败，请稍后再试", true
 		}
 		if handled {
 			if reply != "" {
@@ -290,10 +294,15 @@ func (s *Service) saveAttachment(ctx context.Context, itemID int64, idx int, mi 
 
 // download 下载、校验、落盘并更新附件记录；失败只记录，留给 RetryAttachments。
 func (s *Service) download(ctx context.Context, a *model.Attachment, idx int, mi ilink.Item, now time.Time) {
+	skipped := false // 暂停或没凭证：没有真正尝试，不计次数
+	attempts := a.Attempts
 	a.Attempts++
 	err := func() error {
 		c, err := s.Session.Client(ctx)
 		if err != nil {
+			if errors.Is(err, session.ErrPaused) || errors.Is(err, session.ErrNoCred) {
+				skipped = true
+			}
 			return err
 		}
 		data, err := c.Download(ctx, mi)
@@ -312,7 +321,11 @@ func (s *Service) download(ctx context.Context, a *model.Attachment, idx int, mi
 		a.RelPath, a.Size, a.State, a.LastError = rel, int64(len(data)), "ok", ""
 		return nil
 	}()
-	if err != nil {
+	if err != nil && skipped {
+		a.Attempts = attempts
+		a.LastError = err.Error()
+		s.Log.Info("附件下载推迟（暂停或无凭证）", "item", a.ItemID, "err", err)
+	} else if err != nil {
 		a.LastError = err.Error()
 		if a.Attempts >= maxAttachmentAttempts || errors.Is(err, ilink.ErrNoMediaKey) {
 			a.State = "failed" // 缺密钥重试也没用（上游直接跳过）

@@ -17,6 +17,7 @@ const keyBuf = "ilink.buf"
 // -14 时暂停 1 小时（由 session 记录，暂停期间 Client 返回 ErrPaused）。
 const (
 	maxConsecutiveFailures = 3
+	maxBatchFailures       = 5
 	defaultRetryDelay      = 2 * time.Second
 	defaultBackoffDelay    = 30 * time.Second
 	defaultIdleDelay       = 30 * time.Second
@@ -55,6 +56,7 @@ func (p *Poller) Run(ctx context.Context) error {
 		}
 	}()
 	failures := 0
+	batchFailures := 0
 	fail := func(msg string, err error) {
 		failures++
 		p.Log.Warn(msg, "err", err, "consecutive", failures)
@@ -88,7 +90,10 @@ func (p *Poller) Run(ctx context.Context) error {
 		u, err := c.GetUpdates(ctx, buf)
 		if errors.Is(err, ilink.ErrSessionExpired) {
 			p.Log.Error("微信凭证失效（-14），暂停 1 小时后自动重试；反复出现请重新扫码")
-			p.Session.Pause(ctx)
+			if err := p.Session.Pause(ctx); err != nil {
+				p.Log.Error("记录暂停状态失败", "err", err)
+				wait(ctx, p.BackoffDelay)
+			}
 			failures = 0
 			continue
 		}
@@ -103,10 +108,24 @@ func (p *Poller) Run(ctx context.Context) error {
 		if len(u.Undecodable) > 0 { // 不记录原文（含令牌）
 			p.Log.Warn("有消息无法解析，已跳过（可能是上游协议变化，请运行 make check-upstream 对照）", "count", len(u.Undecodable))
 		}
+		var failedIDs []string
 		for _, m := range u.Msgs {
 			if err := p.Service.Handle(ctx, m); err != nil {
 				p.Log.Error("处理消息失败", "msg_id", m.ID(), "err", err)
+				failedIDs = append(failedIDs, m.ID())
 			}
+		}
+		if len(failedIDs) > 0 {
+			// 不推进游标，等上游重发；Seen/MarkSeen 保证重放安全。同一批连续失败太多次就跳过，免得毒消息卡死。
+			batchFailures++
+			if batchFailures < maxBatchFailures {
+				fail("本批消息处理失败，游标不推进，稍后重试", errors.New("handle failed"))
+				continue
+			}
+			p.Log.Error("多次处理失败，跳过这批消息", "msg_ids", failedIDs)
+		}
+		if len(u.Msgs) > 0 {
+			batchFailures = 0
 		}
 		if u.Buf != "" && u.Buf != buf { // 只有非空才更新游标（与上游一致）
 			if err := p.Store.SetKV(ctx, keyBuf, u.Buf); err != nil {
