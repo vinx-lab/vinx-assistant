@@ -670,3 +670,53 @@ func TestReplayRestoresMissingAttachment(t *testing.T) {
 		t.Fatalf("replay duplicated attachments: %+v", atts)
 	}
 }
+
+func TestSaveTextAsItem(t *testing.T) {
+	enr := &fakeEnricher{}
+	e := newEnv(t, func(d *Deps) { d.Enricher = enr })
+	ctx := context.Background()
+	// 真实链路里原消息入站时已记下 context_token
+	if err := e.sess.RememberContext(ctx, "ctx-1", e.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.SaveTextAsItem(ctx, "m-1", "待办：周末整理照片 https://example.com/p 这个想法"); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Wait()
+	it, err := e.st.GetItemByMsgID(ctx, "m-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Category != model.CatTodo || it.CategoryBy != model.ByPrefix || it.Status != model.StatusOpen {
+		t.Fatalf("item = %+v", it)
+	}
+	if it.RawText != "周末整理照片 https://example.com/p 这个想法" || it.URL != "https://example.com/p" {
+		t.Fatalf("text=%q url=%q", it.RawText, it.URL)
+	}
+	if got := e.item(t, it.ID).Tags; !reflect.DeepEqual(got, []string{"待办", "点子"}) {
+		t.Fatalf("tags = %v", got)
+	}
+	enr.mu.Lock()
+	urls := append([]string(nil), enr.urls...)
+	enr.mu.Unlock()
+	if len(urls) != 1 || urls[0] != "https://example.com/p" {
+		t.Fatalf("enrich urls = %v", urls)
+	}
+	e.clk.Advance(6 * time.Second)
+	e.svc.FlushAcks(ctx)
+	if sent := e.srv.Sent(); len(sent) != 1 || !strings.HasPrefix(sent[0].Text, "✓ 已收：待办｜周末整理照片") {
+		t.Fatalf("sent = %+v", sent)
+	}
+	// 同一 msg_id 再存：视为成功，不重复建条目、不再回执
+	if err := e.svc.SaveTextAsItem(ctx, "m-1", "待办：周末整理照片"); err != nil {
+		t.Fatalf("duplicate: %v", err)
+	}
+	e.clk.Advance(6 * time.Second)
+	e.svc.FlushAcks(ctx)
+	if sent := e.srv.Sent(); len(sent) != 1 {
+		t.Fatalf("duplicate acked again: %+v", sent)
+	}
+	if _, err := e.st.GetItem(ctx, it.ID+1); err == nil {
+		t.Fatal("duplicate created a second item")
+	}
+}

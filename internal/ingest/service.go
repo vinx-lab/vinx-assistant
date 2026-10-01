@@ -313,6 +313,37 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	return err
 }
 
+// SaveTextAsItem 按普通收件规则（前缀与关键词、标签、链接、回执）把一段文字存成条目。
+// 用于后台 AI 判定「不是指令」的消息：那时消息已标记为已收，这里不再碰 seen 表；附件不处理
+// （进入 AI 兜底的消息只有文字）。msg_id 已存在视为成功（重放或已存过）。
+func (s *Service) SaveTextAsItem(ctx context.Context, msgID, text string) error {
+	settings, err := s.Store.LoadSettings(ctx)
+	if err != nil {
+		return err
+	}
+	now := s.Clock.Now()
+	p := Classify(Input{Text: text}, settings.Rules, settings.AI.Images)
+	it := &model.Item{
+		CreatedAt:  now.In(clock.Zone),
+		MsgID:      msgID,
+		RawText:    p.Text,
+		URL:        enrich.ExtractURL(p.Text),
+		Category:   p.Category,
+		CategoryBy: p.CategoryBy,
+		Level:      p.Level,
+		Status:     model.DefaultStatus(p.Category),
+	}
+	if _, err := s.Store.InsertItem(ctx, it); err != nil {
+		if errors.Is(err, store.ErrDuplicate) {
+			return nil
+		}
+		return err
+	}
+	s.acker.Add(now, ackLabel(it, flat{text: text}))
+	s.enqueue(postJob{itemID: it.ID, labels: p.Labels, url: it.URL, now: now})
+	return nil
+}
+
 // replay 处理重放（条目已在库里）：补插缺失的附件记录（按序号比对），补打标签，交给后台；
 // 覆盖「条目入库后、附件记录插入前崩溃」的窗口。
 func (s *Service) replay(ctx context.Context, msgID string, f flat, labels []string, now time.Time) error {
