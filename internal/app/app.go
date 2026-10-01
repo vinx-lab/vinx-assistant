@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vinx-lab/vinx-assistant/internal/batch"
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
@@ -51,6 +52,10 @@ type App struct {
 	Tickers   []Ticker
 	Log       *slog.Logger
 	TickEvery time.Duration
+	Batch     *batch.Runner
+
+	baseCtx context.Context // Run 期间的根 context；BatchNow 用它，服务退出时后台批次随之取消
+	bg      sync.WaitGroup  // BatchNow 启动的后台批次；Close 前等它结束
 }
 
 func New(cfg Config, log *slog.Logger) (*App, error) {
@@ -65,7 +70,7 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 		return nil, err
 	}
 	hc := &http.Client{} // 默认 Transport 读 HTTPS_PROXY
-	a := &App{Cfg: cfg, Store: st, Clock: clock.Real{}, Log: log, Mux: http.NewServeMux(), TickEvery: 30 * time.Second}
+	a := &App{Cfg: cfg, Store: st, Clock: clock.Real{}, Log: log, Mux: http.NewServeMux(), TickEvery: 30 * time.Second, baseCtx: context.Background()}
 	a.Session = session.New(st, hc, a.Clock)
 	a.Notifier = notify.NewWeChat(a.Session, st)
 	a.Fetcher = enrich.NewFetcher(hc)
@@ -78,19 +83,42 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "wechat": a.Session.Status(r.Context())})
 	})
+	a.Batch = &batch.Runner{Store: st, Clock: a.Clock, Fetcher: a.Fetcher, MediaDir: cfg.MediaDir(), Log: log}
+	a.Tickers = append(a.Tickers, &batch.Scheduler{Runner: a.Batch, Store: st, Log: log})
 	web.Register(a.Mux, web.Deps{
+		BatchNow: a.BatchNow, BatchRunning: a.Batch.Running, NextBatch: batch.NextSlot,
 		Store: st, Session: a.Session, Clock: a.Clock, MediaDir: cfg.MediaDir(), Log: log,
 		ListModels: func(ctx context.Context, p model.Provider) ([]string, error) {
 			return llm.New(p.BaseURL, p.APIKey, hc).Models(ctx)
 		},
 		NewLogin: func() *ilink.Login { return ilink.NewLogin(hc) },
 	})
-	// 计划 2–4 在这里追加装配。
+	// 计划 3–4 在这里追加装配（计划 2 的 batch 已在上面随 web.Deps 装配）。
 	return a, nil
 }
 
-// Close 停掉后处理队列（serve 退出时已停过，重复调用无害）再关数据库。
+// BatchNow 在后台立即跑一次整理（网页「立即整理」按钮用）。已有整理在进行时返回 false。
+func (a *App) BatchNow() bool {
+	if a.Batch.Running() {
+		return false
+	}
+	ctx := a.baseCtx
+	a.bg.Add(1)
+	go func() {
+		defer a.bg.Done()
+		rep, err := a.Batch.Run(ctx)
+		if err != nil {
+			batch.LogRunError(a.Log, "手动整理", err)
+			return
+		}
+		a.Log.Info("手动整理", "report", rep.String())
+	}()
+	return true
+}
+
+// Close 先等 BatchNow 的后台批次结束，再停掉后处理队列（serve 退出时已停过，重复调用无害），最后关数据库。
 func (a *App) Close() error {
+	a.bg.Wait()
 	a.Ingest.Close()
 	return a.Store.Close()
 }
@@ -133,6 +161,7 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	a.baseCtx = ctx
 	if w := CheckPrivateDir(a.Cfg.DataDir); w != "" {
 		a.Log.Warn(w)
 	}
@@ -174,6 +203,12 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	defer scancel()
 	srv.Shutdown(sctx)
 	wg.Wait()
+	// 定时器触发的后台批次：ctx 已取消，正在进行的 AI 调用很快返回。
+	for _, t := range a.Tickers {
+		if w, ok := t.(interface{ Wait() }); ok {
+			w.Wait()
+		}
+	}
 	// 收件已停：停掉后处理队列（正在下的附件中断、积压的丢弃，附件仍是 pending，下次启动由重试补下）。
 	a.Ingest.Close()
 	a.Ingest.Wait()

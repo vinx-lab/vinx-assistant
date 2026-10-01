@@ -119,3 +119,26 @@ func TestCheckPrivateDir(t *testing.T) {
 		t.Fatal("missing dir should not warn")
 	}
 }
+
+func TestBatchNow(t *testing.T) {
+	a, err := New(Config{Listen: freeAddr(t), DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if !a.BatchNow() {
+		t.Fatal("BatchNow must start when idle")
+	}
+	// defer a.Close() 会等后台批次结束再关数据库；用 -race 跑能发现两者的竞争。
+}
+
+func TestBatchNowWiredIntoWebDeps(t *testing.T) {
+	a, err := New(Config{Listen: freeAddr(t), DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if a.Batch == nil || len(a.Tickers) == 0 {
+		t.Fatal("batch runner and scheduler must be wired")
+	}
+}

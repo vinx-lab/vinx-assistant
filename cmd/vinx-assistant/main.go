@@ -14,6 +14,9 @@ import (
 
 	"github.com/vinx-lab/vinx-assistant/internal/app"
 	"github.com/vinx-lab/vinx-assistant/internal/backup"
+	"github.com/vinx-lab/vinx-assistant/internal/batch"
+	"github.com/vinx-lab/vinx-assistant/internal/clock"
+	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
 )
 
@@ -24,6 +27,7 @@ const usageText = `用法：vinx-assistant <子命令> [参数]
 子命令：
   serve    常驻运行：收微信消息、定时整理、网页
   login    在终端扫码登录微信 ClawBot
+  batch    立即跑一次 AI 整理（服务运行中也可以，两边不会重复整理）
   backup   导出数据库快照和附件（服务运行中也可以）
   version  显示版本
 
@@ -70,6 +74,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "login":
 		return cmdLogin(ctx, args[1:], os.Stdin, stdout, stderr)
+	case "batch":
+		fs := flag.NewFlagSet("batch", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		cfg, err := parseConfig(fs, args[1:], os.Getenv, home, false)
+		if err != nil {
+			return 2
+		}
+		st, err := store.Open(cfg.DBPath())
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		defer st.Close()
+		r := &batch.Runner{Store: st, Clock: clock.Real{}, Fetcher: enrich.NewFetcher(nil), MediaDir: cfg.MediaDir(),
+			Log: slog.New(slog.NewTextHandler(stderr, nil))}
+		rep, err := r.Run(ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, "整理失败：", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, rep.String())
+		return 0
 	case "backup":
 		fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 		fs.SetOutput(stderr)
