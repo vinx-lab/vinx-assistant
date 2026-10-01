@@ -8,6 +8,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestWeChatCodeSigninFlow(t *testing.T) {
 	if code, _ := get(mine, "/search"); code != http.StatusSeeOther {
 		t.Fatalf("未登录 /search = %d", code)
 	}
-	re := regexp.MustCompile(`<p class="code"[^>]*>(\d{6})</p>`)
+	re := regexp.MustCompile(`<p class="code">登录 (\d{6})</p>`)
 	_, page := get(mine, "/signin?next="+url.QueryEscape("/search"))
 	m := re.FindStringSubmatch(page)
 	if m == nil {
@@ -98,7 +99,7 @@ func TestWeChatCodeSigninFlow(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if s := srv.Sent(); len(s) > 0 {
-			if s[len(s)-1].Text != ingest.SigninReply || s[len(s)-1].ContextToken != "ctx-7001" {
+			if !strings.HasPrefix(s[len(s)-1].Text, ingest.SigninReplyPrefix) || s[len(s)-1].ContextToken != "ctx-7001" {
 				t.Fatalf("回复 %+v", s[len(s)-1])
 			}
 			break
@@ -131,5 +132,21 @@ func TestWeChatCodeSigninFlow(t *testing.T) {
 	}
 	if j := poll(mine); j["state"] != "ok" { // 已登录时查询直接 ok
 		t.Fatalf("已登录：%v", j)
+	}
+
+	// 主人在微信里发「退出网页登录」：所有网页登录失效
+	srv.Push(ilinktest.TextMsg(7002, ilinktest.OwnerID, "退出网页登录"))
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if s := srv.Sent(); s[len(s)-1].Text == ingest.SignoutReply {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("没有回复退出")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if code, _ := get(mine, "/search"); code != http.StatusSeeOther {
+		t.Fatalf("退出后 /search = %d", code)
 	}
 }

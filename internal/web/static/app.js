@@ -110,13 +110,27 @@
   });
 
   // 6. 网页登录的微信验证码：每 2 秒查询一次，确认后跳回原来的地址；过期时提示换一个
+  // 复制要发给 Bot 的文字（没有剪贴板接口时按钮保持隐藏）
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    if (!navigator.clipboard) return;
+    b.hidden = false;
+    b.addEventListener('click', function () {
+      navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function () {
+        b.textContent = '已复制';
+        setTimeout(function () { b.textContent = '复制'; }, 2000);
+      }, function () { b.textContent = '复制失败，请手动输入'; });
+    });
+  });
   var pollBox = document.querySelector('[data-signin-poll]');
   if (pollBox) {
     var msg = document.getElementById('code-msg');
+    var help = document.getElementById('code-help');
+    var started = Date.now();
     var url = base + '/signin/code/status?next=' + encodeURIComponent(pollBox.getAttribute('data-next') || '/');
     var codeTimer = setInterval(function () {
       fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
-        if (j.state === 'ok') { clearInterval(codeTimer); location.href = j.next || (base + '/'); }
+        if (j.state === 'ok') { clearInterval(codeTimer); location.href = j.next || (base + '/'); return; }
+        if (j.state === 'pending' && help && Date.now() - started > 30000) help.hidden = false; // 30 秒还没确认：给出排查办法
         else if (j.state === 'expired') {
           clearInterval(codeTimer);
           msg.textContent = '验证码已过期。';

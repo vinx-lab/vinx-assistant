@@ -76,7 +76,7 @@ func TestLoginCodes(t *testing.T) {
 	now := clock.At(2026, 10, 1, 9, 0)
 	exp := now.Add(2 * time.Minute)
 
-	if err := st.CreateLoginCode(ctx, "c1", "b1", now, exp); err != nil {
+	if err := st.CreateLoginCode(ctx, "c1", "b1", LoginClient{}, now, exp); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := st.LoginCodeActive(ctx, "c1", now); !ok {
@@ -100,14 +100,14 @@ func TestLoginCodes(t *testing.T) {
 		t.Fatal("未确认应 pending，不认识的浏览器应 gone")
 	}
 	// 数字对不上不确认
-	if ok, _ := st.ConfirmLoginCode(ctx, "c9", now); ok {
+	if _, ok, _ := st.ConfirmLoginCode(ctx, "c9", now); ok {
 		t.Fatal("c9 不应匹配")
 	}
-	if ok, _ := st.ConfirmLoginCode(ctx, "c1", now.Add(time.Minute)); !ok {
+	if _, ok, _ := st.ConfirmLoginCode(ctx, "c1", now.Add(time.Minute)); !ok {
 		t.Fatal("c1 应确认")
 	}
 	// 只能确认一次
-	if ok, _ := st.ConfirmLoginCode(ctx, "c1", now.Add(time.Minute)); ok {
+	if _, ok, _ := st.ConfirmLoginCode(ctx, "c1", now.Add(time.Minute)); ok {
 		t.Fatal("重复确认")
 	}
 	// 绑定浏览器：别的浏览器拿不到
@@ -123,8 +123,8 @@ func TestLoginCodes(t *testing.T) {
 	}
 
 	// 过期：未确认的到期作废，也不能再确认
-	st.CreateLoginCode(ctx, "c2", "b2", now, exp)
-	if ok, _ := st.ConfirmLoginCode(ctx, "c2", exp); ok {
+	st.CreateLoginCode(ctx, "c2", "b2", LoginClient{}, now, exp)
+	if _, ok, _ := st.ConfirmLoginCode(ctx, "c2", exp); ok {
 		t.Fatal("过期后不应确认")
 	}
 	if poll("b2", exp) != LoginCodeGone {
@@ -132,29 +132,56 @@ func TestLoginCodes(t *testing.T) {
 	}
 
 	// 同一浏览器重新取码，旧的作废
-	st.CreateLoginCode(ctx, "c3", "b3", now, exp)
-	st.CreateLoginCode(ctx, "c4", "b3", now, exp)
+	st.CreateLoginCode(ctx, "c3", "b3", LoginClient{}, now, exp)
+	st.CreateLoginCode(ctx, "c4", "b3", LoginClient{}, now, exp)
 	if ok, _ := st.LoginCodeActive(ctx, "c3", now); ok {
 		t.Fatal("同一浏览器的旧验证码应作废")
 	}
 
-	// 数量上限：最多 5 个，超出时最早的作废
+	// 数量上限：最多 5 个，满了拒绝新码，不挤掉已有的（包括已确认、还没换会话的）
 	st.db.ExecContext(ctx, `DELETE FROM login_codes`)
-	for i, b := range []string{"x1", "x2", "x3", "x4", "x5", "x6"} {
-		st.CreateLoginCode(ctx, "k"+b, b, now.Add(time.Duration(i)*time.Second), exp)
+	for i, b := range []string{"x1", "x2", "x3", "x4", "x5"} {
+		if err := st.CreateLoginCode(ctx, "k"+b, b, LoginClient{}, now.Add(time.Duration(i)*time.Second), exp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.ConfirmLoginCode(ctx, "kx1", now)
+	if err := st.CreateLoginCode(ctx, "kx6", "x6", LoginClient{}, now, exp); err != ErrTooManyLoginCodes {
+		t.Fatalf("第 6 个：%v", err)
 	}
 	if n, _ := st.CountLoginCodes(ctx); n != MaxActiveLoginCodes {
 		t.Fatalf("count = %d", n)
 	}
-	if ok, _ := st.LoginCodeActive(ctx, "kx1", now); ok {
-		t.Fatal("最早的应作废")
+	if ok, _ := st.LoginCodeActive(ctx, "kx2", now); !ok {
+		t.Fatal("已有的码不应被挤掉")
 	}
-	if ok, _ := st.LoginCodeActive(ctx, "kx6", now); !ok {
-		t.Fatal("最新的应有效")
+	if poll("x1", exp.Add(30*time.Second)) != LoginCodeConfirmed {
+		t.Fatal("已确认的码不应被挤掉")
+	}
+	// 同一浏览器换码不受上限影响（先作废自己的旧码）
+	if err := st.CreateLoginCode(ctx, "kx2b", "x2", LoginClient{}, now, exp); err != nil {
+		t.Fatal(err)
+	}
+	// 刷新复用：已确认的码在宽限内仍算这个浏览器的
+	st.db.ExecContext(ctx, `DELETE FROM login_codes`)
+	st.CreateLoginCode(ctx, "r", "br", LoginClient{IP: "10.0.0.1", UA: "Chrome / Windows"}, now, exp)
+	client, ok, _ := st.ConfirmLoginCode(ctx, "r", now)
+	if !ok || client.IP != "10.0.0.1" || client.UA != "Chrome / Windows" {
+		t.Fatalf("发起方：%+v %v", client, ok)
+	}
+	if ok, _ := st.LoginCodeMatches(ctx, "br", "r", exp.Add(30*time.Second)); !ok {
+		t.Fatal("宽限内应仍匹配")
+	}
+	if ok, _ := st.LoginCodeMatches(ctx, "br", "r", exp.Add(LoginCodeGrace)); ok {
+		t.Fatal("宽限后不应匹配")
+	}
+	st.DeleteAllLoginCodes(ctx)
+	if n, _ := st.CountLoginCodes(ctx); n != 0 {
+		t.Fatal("DeleteAllLoginCodes")
 	}
 
 	// 查询次数上限
-	st.CreateLoginCode(ctx, "p", "bp", now, exp)
+	st.CreateLoginCode(ctx, "p", "bp", LoginClient{}, now, exp)
 	for i := 0; i < MaxLoginCodePolls; i++ {
 		if poll("bp", now) != LoginCodePending {
 			t.Fatalf("第 %d 次查询", i+1)
@@ -163,10 +190,10 @@ func TestLoginCodes(t *testing.T) {
 	if poll("bp", now) != LoginCodeGone {
 		t.Fatal("超过查询上限应作废")
 	}
-	if ok, _ := st.ConfirmLoginCode(ctx, "p", now); ok {
+	if _, ok, _ := st.ConfirmLoginCode(ctx, "p", now); ok {
 		t.Fatal("作废后不应确认")
 	}
-	st.CreateLoginCode(ctx, "d", "bd", now, exp)
+	st.CreateLoginCode(ctx, "d", "bd", LoginClient{}, now, exp)
 	st.DeleteLoginCode(ctx, "bd")
 	if poll("bd", now) != LoginCodeGone {
 		t.Fatal("删除后应 gone")

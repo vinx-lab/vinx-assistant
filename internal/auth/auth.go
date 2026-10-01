@@ -132,19 +132,32 @@ func NewCode() (string, error) {
 // CodeHash 是验证码在数据库里的样子。
 func CodeHash(code string) string { return TokenHash("login-code:" + code) }
 
-// ParseCode 识别微信里发来的验证码：去掉首尾空白后正好是 6 位数字，或者「登录 123456」（中间空白可有可无）。
+// CodeText 是登录页让主人发给 Bot 的完整文字。
+func CodeText(code string) string { return "登录 " + code }
+
+// ParseCode 识别微信里发来的登录确认：去掉首尾空白后是「登录 123456」，中间空白（含全角空格）可有可无。
+// 只有 6 位数字的消息不算（spec 0004 安全审查 F3）：取件码之类的数字照常入库，也提醒主人这是在登录。
 func ParseCode(text string) (string, bool) {
-	t := strings.TrimSpace(text)
-	if rest, ok := strings.CutPrefix(t, "登录"); ok {
-		t = strings.TrimSpace(rest)
-	}
-	if len(t) != CodeLen {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(text), "登录")
+	if !ok {
 		return "", false
 	}
-	for i := 0; i < len(t); i++ {
-		if t[i] < '0' || t[i] > '9' {
-			return "", false
-		}
+	t := strings.TrimSpace(rest)
+	if !ValidCode(t) {
+		return "", false
 	}
 	return t, true
+}
+
+// ValidCode 报告 s 是否正好是 6 位 ASCII 数字。
+func ValidCode(s string) bool {
+	if len(s) != CodeLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

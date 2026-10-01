@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
@@ -389,8 +390,14 @@ func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if utf8.RuneCountInString(newPW) < shortPassword {
+		msg += "_short" // 不阻止，只提醒（spec 0004 安全审查 F4）
+	}
 	s.redirect(w, r, "/settings/password?msg="+msg)
 }
+
+// shortPassword 以下的密码保存时提醒一句：失败锁定是 15 分钟 10 次，短密码几天内就可能被猜中。
+const shortPassword = 8
 
 // loginRequiredSave 打开或关闭「需要登录」。打开要求微信已登录或已设密码，至少一种登录方式可用；打开时当前浏览器保持登录。
 func (s *Server) loginRequiredSave(w http.ResponseWriter, r *http.Request) {

@@ -336,8 +336,10 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 .signin .card + .card, .signin .card + .signin-note { margin-top: 12px; }
 .signin form { display: flex; flex-direction: column; gap: 14px; }
 .signin-code { text-align: center; }
-.signin-code .code { font: 700 40px/1.2 var(--mono); letter-spacing: .18em; font-variant-numeric: tabular-nums; color: var(--primary); user-select: all; }
+.signin-code .code { font: 700 32px/1.2 var(--mono); letter-spacing: .12em; font-variant-numeric: tabular-nums; color: var(--primary); user-select: all; }
 .signin-code .code-msg:empty { display: none; }
+.signin-code .copy-btn { align-self: center; }
+.warn-box { padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); font-size: 13.5px; font-weight: 600; text-align: left; }
 .signin-code .code-msg { color: var(--amber); font-size: 13.5px; }
 .signin-pw summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--text-2); }
 .signin-pw[open] summary { margin-bottom: 14px; }

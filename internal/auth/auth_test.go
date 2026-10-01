@@ -213,7 +213,7 @@ func TestCode(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := ParseCode(c); !ok {
+		if got, ok := ParseCode(CodeText(c)); !ok || got != c || !ValidCode(c) {
 			t.Fatalf("生成的 %q 认不出", c)
 		}
 		seen[c] = true
@@ -225,8 +225,9 @@ func TestCode(t *testing.T) {
 		t.Fatal("CodeHash")
 	}
 	for in, want := range map[string]string{
-		"123456": "123456", " 012345\n": "012345", "登录 123456": "123456", "登录123456": "123456", "登录\u3000654321 ": "654321",
-		"12345": "", "1234567": "", "12345a": "", "\uff11\uff12\uff13\uff14\uff15\uff16": "", "登陆 123456": "", "123456 登录": "", "请登录 123456": "", "": "",
+		"登录 123456": "123456", "登录123456": "123456", "登录\u3000654321 ": "654321", " 登录  012345\n": "012345",
+		"123456": "", " 012345\n": "", "登录 12345": "", "登录 1234567": "", "登录 12345a": "", "登录 \uff11\uff12\uff13\uff14\uff15\uff16": "",
+		"登陆 123456": "", "123456 登录": "", "请登录 123456": "", "登录": "", "": "",
 	} {
 		got, ok := ParseCode(in)
 		if got != want || ok != (want != "") {

@@ -317,21 +317,54 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	return err
 }
 
-// SigninReply 是验证码确认后 Bot 的回复。
-const SigninReply = "✓ 已登录网页"
+// SigninReplyPrefix 是验证码确认后 Bot 回复的开头；SignoutWord 是微信里让所有网页登录失效的固定指令。
+const (
+	SigninReplyPrefix = "✓ 已登录网页："
+	SignoutWord       = "退出网页登录"
+	SignoutReply      = "已退出全部网页登录"
+)
 
-// signinCode 处理网页登录验证码（spec 0004）：纯文字消息正好是 6 位数字或「登录 123456」，
-// 且和一个有效、未用过的验证码相同时，标记该验证码已确认、回复主人，这条消息不入库、不当指令、不交给 AI。
-// 对不上时返回 false，照常当普通消息处理。验证码由网页写进数据库，这里只读写数据库，不依赖网页进程。
+// SigninReply 是验证码确认后的回复：带上发起登录的浏览器、地址和时间，主人能看出是不是自己（防诱骗发码）。
+func SigninReply(c store.LoginClient, at time.Time) string {
+	ua, ip := c.UA, c.IP
+	if ua == "" {
+		ua = "未知浏览器"
+	}
+	if ip == "" {
+		ip = "未知地址"
+	}
+	return SigninReplyPrefix + ua + "，" + ip + "，" + at.In(clock.Zone).Format("15:04") + "。不是你本人？回复「" + SignoutWord + "」"
+}
+
+// signinCode 处理网页登录（spec 0004）。只看不带附件的纯文字消息：
+//   - 「登录 123456」且和一个有效、未用过的验证码相同：标记已确认，回复发起方信息；
+//   - 「退出网页登录」：吊销全部网页会话和验证码。
+//
+// 这两种消息不入库、不当指令、不交给 AI；验证码对不上时返回 false，照常当普通消息处理。
+// 验证码由网页写进数据库，这里只读写数据库，不依赖网页进程。
 func (s *Service) signinCode(ctx context.Context, id string, f flat, now time.Time) (bool, error) {
 	if len(f.media) > 0 {
 		return false, nil
+	}
+	if strings.TrimSpace(f.text) == SignoutWord {
+		if err := s.Store.DeleteAllSessions(ctx); err != nil {
+			return true, err
+		}
+		if err := s.Store.DeleteAllLoginCodes(ctx); err != nil {
+			return true, err
+		}
+		s.Log.Info("已按微信指令退出全部网页登录", "msg_id", id)
+		if err := s.Store.MarkSeen(ctx, id, now); err != nil {
+			return true, err
+		}
+		s.Reply(ctx, SignoutReply)
+		return true, nil
 	}
 	code, ok := auth.ParseCode(f.text)
 	if !ok {
 		return false, nil
 	}
-	matched, err := s.Store.ConfirmLoginCode(ctx, auth.CodeHash(code), now)
+	client, matched, err := s.Store.ConfirmLoginCode(ctx, auth.CodeHash(code), now)
 	if err != nil || !matched {
 		return false, err
 	}
@@ -340,7 +373,7 @@ func (s *Service) signinCode(ctx context.Context, id string, f flat, now time.Ti
 	if err := s.Store.MarkSeen(ctx, id, now); err != nil {
 		return true, err
 	}
-	s.Reply(ctx, SigninReply)
+	s.Reply(ctx, SigninReply(client, now))
 	return true, nil
 }
 

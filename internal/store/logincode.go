@@ -53,6 +53,17 @@ func cleanLoginCodes(ctx context.Context, q querier, now time.Time) error {
 	return err
 }
 
+// ErrTooManyLoginCodes 表示有效的验证码已达上限：拒绝生成新码，而不是挤掉别人还在用的码。
+var ErrTooManyLoginCodes = errors.New("store: 有效的登录验证码太多")
+
+// LoginClient 是发起登录的浏览器：来源地址和「浏览器 / 系统」摘要。
+type LoginClient struct {
+	IP, UA string
+}
+
+// liveCond 是「还能用」的验证码：未确认且未过期，或已确认且在宽限内。参数：now, now-grace。
+const liveCond = `((confirmed_at IS NULL AND expires_at > ?) OR (confirmed_at IS NOT NULL AND expires_at > ?))`
+
 // LoginCodeActive 报告是否有一个有效、未确认的验证码用这个哈希（生成时避免重复）。
 func (s *Store) LoginCodeActive(ctx context.Context, codeHash string, now time.Time) (bool, error) {
 	var n int
@@ -60,8 +71,9 @@ func (s *Store) LoginCodeActive(ctx context.Context, codeHash string, now time.T
 	return n > 0, err
 }
 
-// CreateLoginCode 保存一个验证码。同一浏览器原来的验证码先作废；未过期的超过 MaxActiveLoginCodes 个时，最早的作废。
-func (s *Store) CreateLoginCode(ctx context.Context, codeHash, browserHash string, now, expires time.Time) error {
+// CreateLoginCode 保存一个验证码。同一浏览器原来的验证码先作废；还能用的验证码已有 MaxActiveLoginCodes 个时
+// 返回 ErrTooManyLoginCodes，不挤掉别人的码（包括已确认、还没换会话的）。
+func (s *Store) CreateLoginCode(ctx context.Context, codeHash, browserHash string, client LoginClient, now, expires time.Time) error {
 	return s.Tx(ctx, func(tx *sql.Tx) error {
 		if err := cleanLoginCodes(ctx, tx, now); err != nil {
 			return err
@@ -69,26 +81,39 @@ func (s *Store) CreateLoginCode(ctx context.Context, codeHash, browserHash strin
 		if _, err := tx.ExecContext(ctx, `DELETE FROM login_codes WHERE browser_hash = ?`, browserHash); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO login_codes (code_hash, browser_hash, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-			codeHash, browserHash, now.Unix(), expires.Unix()); err != nil {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM login_codes`).Scan(&n); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM login_codes WHERE id NOT IN (SELECT id FROM login_codes ORDER BY id DESC LIMIT ?)`, MaxActiveLoginCodes)
+		if n >= MaxActiveLoginCodes {
+			return ErrTooManyLoginCodes
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO login_codes (code_hash, browser_hash, created_at, expires_at, client_ip, client_ua) VALUES (?, ?, ?, ?, ?, ?)`,
+			codeHash, browserHash, now.Unix(), expires.Unix(), client.IP, client.UA)
 		return err
 	})
 }
 
-// ConfirmLoginCode 在收到主人的微信消息时调用：有一个有效、未确认的验证码匹配就标记为已确认，返回 true。
+// ConfirmLoginCode 在收到主人的微信消息时调用：有一个有效、未确认的验证码匹配就标记为已确认，返回 true 和发起方。
 // 多个浏览器碰巧拿到同一个数字时（生成时已尽量避免）只确认最新的那个。
-func (s *Store) ConfirmLoginCode(ctx context.Context, codeHash string, now time.Time) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE login_codes SET confirmed_at = ? WHERE id = (
-		SELECT id FROM login_codes WHERE code_hash = ? AND confirmed_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1)`,
-		now.Unix(), codeHash, now.Unix())
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
+func (s *Store) ConfirmLoginCode(ctx context.Context, codeHash string, now time.Time) (LoginClient, bool, error) {
+	var c LoginClient
+	ok := false
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		var id int64
+		err := tx.QueryRowContext(ctx, `SELECT id, client_ip, client_ua FROM login_codes WHERE code_hash = ? AND confirmed_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1`,
+			codeHash, now.Unix()).Scan(&id, &c.IP, &c.UA)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		ok = true
+		_, err = tx.ExecContext(ctx, `UPDATE login_codes SET confirmed_at = ? WHERE id = ?`, now.Unix(), id)
+		return err
+	})
+	return c, ok, err
 }
 
 // PollLoginCode 是浏览器用自己的随机值查询结果：每查一次计数，超过 MaxLoginCodePolls 次作废；
@@ -125,12 +150,18 @@ func (s *Store) PollLoginCode(ctx context.Context, browserHash string, now time.
 	return state, err
 }
 
-// LoginCodeMatches 报告这个浏览器的验证码是否就是 codeHash 且仍有效（「我已发送」表单回显验证码前核对）。
+// LoginCodeMatches 报告这个浏览器的验证码是否就是 codeHash 且还能用（刷新登录页时复用、「我已发送」回显前核对）。
 func (s *Store) LoginCodeMatches(ctx context.Context, browserHash, codeHash string, now time.Time) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM login_codes WHERE browser_hash = ? AND code_hash = ? AND expires_at > ?`,
-		browserHash, codeHash, now.Unix()).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM login_codes WHERE browser_hash = ? AND code_hash = ? AND `+liveCond,
+		browserHash, codeHash, now.Unix(), now.Add(-LoginCodeGrace).Unix()).Scan(&n)
 	return n > 0, err
+}
+
+// DeleteAllLoginCodes 作废所有验证码（微信里「退出网页登录」时，连同已确认还没换会话的一起作废）。
+func (s *Store) DeleteAllLoginCodes(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM login_codes`)
+	return err
 }
 
 // DeleteLoginCode 作废这个浏览器的验证码。

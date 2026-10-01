@@ -250,18 +250,20 @@ func (s *Server) topStatus(r *http.Request) TopStatus {
 }
 
 var messages = map[string]string{
-	"started":   "已开始整理，稍后刷新查看结果。",
-	"busy":      "正在整理中，请稍后再试。",
-	"saved":     "已保存。",
-	"deep":      "已标记为深入研究，下次整理时处理。",
-	"deepnow":   "已标记为深入研究，并开始整理。",
-	"status":    "状态已更新。",
-	"deleted":   "已删除。",
-	"pwset":     "密码已设置。",
-	"pwexists":  "已经有人设置过密码，没有覆盖。请用当前密码修改。",
-	"loginon":   "已开启登录，当前浏览器保持登录。",
-	"loginoff":  "已关闭登录要求。",
-	"pwchanged": "密码已修改，其他设备的登录已全部失效。",
+	"started":         "已开始整理，稍后刷新查看结果。",
+	"busy":            "正在整理中，请稍后再试。",
+	"saved":           "已保存。",
+	"deep":            "已标记为深入研究，下次整理时处理。",
+	"deepnow":         "已标记为深入研究，并开始整理。",
+	"status":          "状态已更新。",
+	"deleted":         "已删除。",
+	"pwset":           "密码已设置。",
+	"pwset_short":     "密码已设置。这个密码很短（少于 8 个字符），能连上这个网址的人几天内就可能猜中，建议改长一些，或只在可信网络里使用。",
+	"pwchanged_short": "密码已修改，其他设备的登录已全部失效。这个密码很短（少于 8 个字符），能连上这个网址的人几天内就可能猜中，建议改长一些，或只在可信网络里使用。",
+	"pwexists":        "已经有人设置过密码，没有覆盖。请用当前密码修改。",
+	"loginon":         "已开启登录，当前浏览器保持登录。",
+	"loginoff":        "已关闭登录要求。",
+	"pwchanged":       "密码已修改，其他设备的登录已全部失效。",
 }
 
 func (s *Server) page(r *http.Request, title, nav string) Page {
