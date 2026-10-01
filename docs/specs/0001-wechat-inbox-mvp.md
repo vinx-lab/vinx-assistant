@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 
 # 0001 微信收集箱第一期
