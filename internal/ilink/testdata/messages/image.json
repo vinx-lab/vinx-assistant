@@ -18,10 +18,10 @@
           "encrypt_query_param": "<encrypt_query_param>",
           "full_url": "<full_url>"
         },
-        "mid_size": 32578,
-        "thumb_height": 210,
-        "thumb_size": 8696,
-        "thumb_width": 118
+        "mid_size": 1,
+        "thumb_height": 1,
+        "thumb_size": 1,
+        "thumb_width": 1
       },
       "is_completed": true,
       "msg_id": "v1:1000000000000000001",

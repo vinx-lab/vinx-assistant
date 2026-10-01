@@ -37,7 +37,7 @@
 
 ## 怎么发现上游变了
 
-1. **定期检查**：`make check-upstream`（即 `go run ./tools/check-upstream`）。对比 `upstream.lock` 里的版本和协议相关文件的 blob SHA，有变化时输出报告（版本、改动的文件、新的变更日志段落、对比链接），退出码 1。仓库在 GitHub 上时，`.github/workflows/upstream-check.yml` 每周一自动跑，有变化就开或更新一个 issue。
+1. **定期检查**：`make check-upstream`（先编译 `tools/check-upstream` 再运行；不用 `go run`，它会把退出码 2 折成 1）。对比 `upstream.lock` 里的版本和协议相关文件的 blob SHA，有变化时输出报告（版本、改动的文件、新的变更日志段落、对比链接），退出码 1。仓库在 GitHub 上时，`.github/workflows/upstream-check.yml` 每周一自动跑，有变化就开或更新一个 issue。
 2. **运行时告警**：收到 `drift.go` 已知字段之外的字段或消息类型时，日志打 WARN，记进 kv `ilink.drift`，网页状态栏提示。
 3. **样例测试**：`testdata/messages/` 下是脱敏后的真实消息，`TestFixtures` 保证它们能解析、没有未知字段、确实已脱敏。
 
@@ -47,4 +47,4 @@
 2. 只是 OpenClaw 宿主适配、协议没变：直接到第 5 步。
 3. 协议变了：按「文件对应」改本包（和 poller、session），`ChannelVersion` 改成上游新版本号；新字段加进 `drift.go`；有真实样例的话用 `tools/sanitize-fixture` 生成并人工检查后加进 `testdata/messages/`；补测试。
 4. `make test`，再在真实微信上冒烟一次（收文字、图片、语音、文件、引用回复）。
-5. `go run ./tools/check-upstream -update` 更新 `upstream.lock`，和代码一起提交：`chore(ilink): 同步上游 <版本>`，提交说明里写清楚协议改了什么、我们改了什么。
+5. `make check-upstream ARGS=-update` 更新 `upstream.lock`，和代码一起提交：`chore(ilink): 同步上游 <版本>`，提交说明里写清楚协议改了什么、我们改了什么。

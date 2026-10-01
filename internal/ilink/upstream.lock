@@ -1,5 +1,5 @@
 # 本项目 ilink 包对齐的上游版本。只在完成一次同步（改完代码、样例、测试）后更新：
-#   go run ./tools/check-upstream -update
+#   make check-upstream ARGS=-update
 repo Tencent/openclaw-weixin
 version 2.4.9
 commit 24de5c9eb0dd5e595d7e2d090ed8a3f82870d42c

@@ -1,7 +1,9 @@
 // check-upstream 对照上游 openclaw-weixin，检查 ilink 包跟随的协议相关文件有没有变化。只读。
 //
-//	go run ./tools/check-upstream          有变化时输出 Markdown 报告，退出码 1；没变化退出码 0；出错退出码 2
-//	go run ./tools/check-upstream -update  同步完成后，把 upstream.lock 更新为上游当前状态
+//	make check-upstream                    有变化时输出 Markdown 报告，退出码 1；没变化退出码 0；出错退出码 2
+//	make check-upstream ARGS=-update       同步完成后，把 upstream.lock 更新为上游当前状态
+//
+// 不要用 go run 运行：它会把子进程的退出码 2 折成 1。
 //
 // 环境变量：GITHUB_TOKEN（可选，提高 API 限额）、UPSTREAM_API（测试用，默认 https://api.github.com）。
 package main
@@ -50,15 +52,15 @@ func parseLock(r io.Reader) (*Lock, error) {
 			return nil, fmt.Errorf("lock 文件格式不对：%q", sc.Text())
 		}
 	}
-	if l.Repo == "" || l.Version == "" || len(l.Files) == 0 {
-		return nil, fmt.Errorf("lock 文件缺少 repo、version 或 file")
+	if l.Repo == "" || l.Version == "" || l.Commit == "" || len(l.Files) == 0 {
+		return nil, fmt.Errorf("lock 文件缺少 repo、version、commit 或 file")
 	}
 	return l, sc.Err()
 }
 
 func (l *Lock) Format() string {
 	var b strings.Builder
-	b.WriteString("# 本项目 ilink 包对齐的上游版本。只在完成一次同步（改完代码、样例、测试）后更新：\n#   go run ./tools/check-upstream -update\n")
+	b.WriteString("# 本项目 ilink 包对齐的上游版本。只在完成一次同步（改完代码、样例、测试）后更新：\n#   make check-upstream ARGS=-update\n")
 	fmt.Fprintf(&b, "repo %s\nversion %s\ncommit %s\n", l.Repo, l.Version, l.Commit)
 	for _, f := range l.Files {
 		fmt.Fprintf(&b, "file %s %s\n", f, l.SHAs[f])
@@ -116,11 +118,19 @@ func fetch(c *client, l *Lock) (*Upstream, error) {
 	if err := c.get("/repos/"+l.Repo+"/contents/package.json?ref="+u.Commit, &pkg); err != nil {
 		return nil, err
 	}
-	raw, _ := base64.StdEncoding.DecodeString(strings.ReplaceAll(pkg.Content, "\n", ""))
+	raw, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(pkg.Content, "\n", ""))
+	if err != nil {
+		return nil, fmt.Errorf("package.json 内容解码失败：%w", err)
+	}
 	var meta struct {
 		Version string `json:"version"`
 	}
-	json.Unmarshal(raw, &meta)
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, fmt.Errorf("package.json 解析失败：%w", err)
+	}
+	if meta.Version == "" {
+		return nil, fmt.Errorf("package.json 没有 version")
+	}
 	u.Version = meta.Version
 	for _, f := range l.Files {
 		var file struct {
@@ -229,6 +239,12 @@ func run(lockPath string, update bool, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if update {
+		for _, p := range l.Files {
+			if u.SHAs[p] == "" {
+				fmt.Fprintf(stderr, "check-upstream：%s 在上游已删除或改名，需要人工决定：删掉或改名该条目\n", p)
+				return 2
+			}
+		}
 		l.Version, l.Commit = u.Version, u.Commit
 		for _, p := range l.Files {
 			l.SHAs[p] = u.SHAs[p]

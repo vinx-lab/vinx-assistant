@@ -60,3 +60,25 @@ func TestSanitizeRemovesPersonalData(t *testing.T) {
 		t.Error("Sanitize not idempotent")
 	}
 }
+
+func TestSanitizeNumbersAndFileName(t *testing.T) {
+	raw := []byte(`{"message_id":123456789,"root_id":555,"parent_id":666,"item_list":[{"type":3,"voice_item":{"playtime":4340,"encode_type":4,"sample_rate":16000}},{"type":2,"image_item":{"mid_size":32578,"thumb_size":8696,"thumb_width":118,"thumb_height":210,"hd_size":0}},{"type":5,"video_item":{"video_size":987654,"play_length":4321}},{"type":4,"file_item":{"file_name":"a.我的私事"},"ref_msg":{"svr_id":424242}}]}`)
+	out, err := Sanitize(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"123456789", "555", "666", "4340", "32578", "8696", "118", "210", "987654", "4321", "424242", "我的私事"} {
+		if bytes.Contains(out, []byte(leak)) {
+			t.Errorf("leaked %q in %s", leak, out)
+		}
+	}
+	for _, keep := range []string{`"encode_type": 4`, `"sample_rate": 16000`, `"hd_size": 0`, `"type": 3`, `"file_name": "示例"`} {
+		if !bytes.Contains(out, []byte(keep)) {
+			t.Errorf("missing %q in %s", keep, out)
+		}
+	}
+	twice, _ := Sanitize(out)
+	if !bytes.Equal(out, twice) {
+		t.Error("not idempotent")
+	}
+}

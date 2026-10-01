@@ -21,7 +21,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          go run ./tools/check-upstream > report.md
+          go build -o "$RUNNER_TEMP/check-upstream" ./tools/check-upstream
+          "$RUNNER_TEMP/check-upstream" > report.md
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat report.md
       - if: steps.run.outputs.code == '1'

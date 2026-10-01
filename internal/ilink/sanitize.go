@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path"
+	"regexp"
 )
 
 // Sanitize 把一条真实消息的 JSON 变成可以提交进仓库的测试样例：保留全部字段和类型，
@@ -43,6 +44,15 @@ var fixedNumbers = map[string]string{
 	"update_time_ms": "1790000000000",
 }
 
+// structural 是描述协议结构、不含个人信息的数字字段，原样保留；其余非零数字一律换成固定值
+// （尺寸、时长、各种 ID 都可能泄露内容或身份）。
+var structural = map[string]bool{
+	"type": true, "message_type": true, "message_state": true,
+	"encode_type": true, "bits_per_sample": true, "sample_rate": true,
+}
+
+var extRe = regexp.MustCompile(`^\.[A-Za-z0-9]{1,8}$`)
+
 func sanitize(key string, v any) any {
 	switch t := v.(type) {
 	case map[string]any:
@@ -60,17 +70,26 @@ func sanitize(key string, v any) any {
 			return t
 		}
 		if key == "file_name" {
-			return "示例" + path.Ext(t)
+			if ext := path.Ext(t); extRe.MatchString(ext) {
+				return "示例" + ext
+			}
+			return "示例"
 		}
 		if p, ok := placeholders[key]; ok {
 			return p
 		}
 		return "<" + key + ">"
 	case json.Number:
-		if n, ok := fixedNumbers[key]; ok && t.String() != "0" {
+		if f, err := t.Float64(); err == nil && f == 0 {
+			return t
+		}
+		if structural[key] {
+			return t
+		}
+		if n, ok := fixedNumbers[key]; ok {
 			return json.Number(n)
 		}
-		return t
+		return json.Number("1")
 	}
 	return v
 }

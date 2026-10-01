@@ -22,7 +22,7 @@
           "encrypt_query_param": "<encrypt_query_param>",
           "full_url": "<full_url>"
         },
-        "playtime": 4340,
+        "playtime": 1,
         "sample_rate": 16000,
         "text": "示例文字"
       }

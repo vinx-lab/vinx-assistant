@@ -34,8 +34,11 @@ offline-build:
 	env -i HOME=$(HOME) PATH=/usr/bin:/bin GOENV=off GOPROXY=off $(MAKE) --no-print-directory build
 
 # 对照上游 openclaw-weixin 的协议相关文件（只读；有变化时退出码 1）
+# 先编译再运行：go run 会把子进程的退出码 2（出错）折成 1（有变化）
+# 同步完成后更新 lock：make check-upstream ARGS=-update
 check-upstream:
-	$(GO) run ./tools/check-upstream
+	$(GO) build -o dist/check-upstream ./tools/check-upstream
+	dist/check-upstream $(ARGS)
 
 clean:
 	rm -rf dist

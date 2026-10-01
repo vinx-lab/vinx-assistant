@@ -124,3 +124,39 @@ func TestParseLockErrors(t *testing.T) {
 		t.Fatal("want error for missing fields")
 	}
 }
+
+func TestUpdateRefusesMissingFile(t *testing.T) {
+	srv := fakeGitHub(t, "2.5.0", "", true)
+	defer srv.Close()
+	t.Setenv("UPSTREAM_API", srv.URL)
+	p := writeLock(t)
+	var out, errb bytes.Buffer
+	if code := run(p, true, &out, &errb); code != 2 || !strings.Contains(errb.String(), "需要人工决定") {
+		t.Fatalf("code=%d err=%s", code, errb.String())
+	}
+	if b, _ := os.ReadFile(p); string(b) != lockText {
+		t.Fatalf("lock was modified:\n%s", b)
+	}
+}
+
+func TestBadPackageJSONIsError(t *testing.T) {
+	for _, ver := range []string{""} {
+		srv := fakeGitHub(t, ver, "s2", false)
+		t.Setenv("UPSTREAM_API", srv.URL)
+		p := writeLock(t)
+		var out, errb bytes.Buffer
+		if code := run(p, true, &out, &errb); code != 2 {
+			t.Errorf("version %q: code=%d", ver, code)
+		}
+		if b, _ := os.ReadFile(p); string(b) != lockText {
+			t.Errorf("lock was modified:\n%s", b)
+		}
+		srv.Close()
+	}
+}
+
+func TestParseLockRequiresCommit(t *testing.T) {
+	if _, err := parseLock(strings.NewReader("repo x\nversion 1\nfile a b\n")); err == nil {
+		t.Fatal("want error for missing commit")
+	}
+}
