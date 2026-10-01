@@ -3,7 +3,11 @@ package ilink_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink/ilinktest"
@@ -14,7 +18,7 @@ func TestLoginWithVerifyCode(t *testing.T) {
 	defer srv.Close()
 	srv.SetLoginStates("wait", "scaned", "need_verifycode", "confirmed")
 	l := ilink.NewLogin(nil)
-	l.BaseURL, l.PollDelay = srv.URL, 0
+	l.BaseURL, l.PollDelay = srv.URL, time.Millisecond
 
 	qr, err := l.Start(context.Background(), nil)
 	if err != nil || qr.Code != "qr-1" || qr.Content == "" {
@@ -40,7 +44,7 @@ func TestLoginExpired(t *testing.T) {
 	defer srv.Close()
 	srv.SetLoginStates("scaned", "expired")
 	l := ilink.NewLogin(nil)
-	l.BaseURL, l.PollDelay = srv.URL, 0
+	l.BaseURL, l.PollDelay = srv.URL, time.Millisecond
 	qr, _ := l.Start(context.Background(), nil)
 	if _, err := l.Wait(context.Background(), qr, nil, nil); !errors.Is(err, ilink.ErrQRExpired) {
 		t.Fatalf("err = %v", err)
@@ -52,9 +56,41 @@ func TestLoginNeedsVerifyButNoCallback(t *testing.T) {
 	defer srv.Close()
 	srv.SetLoginStates("need_verifycode")
 	l := ilink.NewLogin(nil)
-	l.BaseURL, l.PollDelay = srv.URL, 0
+	l.BaseURL, l.PollDelay = srv.URL, time.Millisecond
 	qr, _ := l.Start(context.Background(), nil)
 	if _, err := l.Wait(context.Background(), qr, nil, nil); err == nil {
 		t.Fatal("want error when verify callback is nil")
+	}
+}
+
+func TestLoginConfirmedWithoutUserIDIsError(t *testing.T) {
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"confirmed","bot_token":"t","ilink_bot_id":"b"}`))
+	}))
+	defer hs.Close()
+	l := &ilink.Login{BaseURL: hs.URL, HTTP: hs.Client()}
+	if _, err := l.Wait(context.Background(), ilink.QR{Code: "q"}, nil, nil); err == nil || !strings.Contains(err.Error(), "ilink_user_id") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoginLiteralZeroDelayDoesNotSpin(t *testing.T) {
+	var n int
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if n < 2 {
+			w.Write([]byte(`{"status":"wait"}`))
+			return
+		}
+		w.Write([]byte(`{"status":"confirmed","bot_token":"t","ilink_bot_id":"b","ilink_user_id":"u"}`))
+	}))
+	defer hs.Close()
+	l := &ilink.Login{BaseURL: hs.URL, HTTP: hs.Client()} // PollDelay、Timeout 都是零值
+	start := time.Now()
+	if _, err := l.Wait(context.Background(), ilink.QR{Code: "q"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 400*time.Millisecond {
+		t.Fatalf("polled again after %v, want default 500ms delay", d)
 	}
 }

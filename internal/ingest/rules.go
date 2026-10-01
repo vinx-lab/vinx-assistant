@@ -31,7 +31,7 @@ func matchPrefix(text string, prefixes []model.PrefixRule) (model.Category, stri
 	sorted := append([]model.PrefixRule(nil), prefixes...)
 	sort.SliceStable(sorted, func(i, j int) bool { return len(sorted[i].Prefix) > len(sorted[j].Prefix) })
 	for _, p := range sorted {
-		if p.Prefix == "" || !strings.HasPrefix(text, p.Prefix) {
+		if p.Prefix == "" || !model.ValidCategory(p.Category) || !strings.HasPrefix(text, p.Prefix) {
 			continue
 		}
 		rest := text[len(p.Prefix):]

@@ -370,6 +370,13 @@ func (s *Service) FlushAcks(ctx context.Context) {
 	}
 }
 
+// FlushAllAcks 忽略静默期，立即发出已积累的回执（关机时调用，避免丢掉）。
+func (s *Service) FlushAllAcks(ctx context.Context) {
+	if text, ok := s.acker.Flush(); ok {
+		s.Reply(ctx, text)
+	}
+}
+
 // Reply 立即发一条消息，并把待补发的提醒附在后面。
 func (s *Service) Reply(ctx context.Context, text string) {
 	var commit func(context.Context, bool) error

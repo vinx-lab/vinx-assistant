@@ -93,7 +93,13 @@ var validStatus = map[Category][]string{
 }
 
 // DefaultStatus 是条目进入某个分类时的初始状态。
-func DefaultStatus(c Category) string { return validStatus[c][0] }
+// 未知分类返回 StatusNew，不能越界崩溃。
+func DefaultStatus(c Category) string {
+	if v := validStatus[c]; len(v) > 0 {
+		return v[0]
+	}
+	return StatusNew
+}
 
 func ValidStatus(c Category, s string) bool {
 	for _, v := range validStatus[c] {

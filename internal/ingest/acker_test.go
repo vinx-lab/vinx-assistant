@@ -38,3 +38,20 @@ func TestAckerBurstMergesAndCapsAt30s(t *testing.T) {
 		t.Fatalf("text=%q ok=%v", text, ok)
 	}
 }
+
+func TestAckerFlushIgnoresQuietPeriod(t *testing.T) {
+	a := NewAcker(5*time.Second, 30*time.Second)
+	if _, ok := a.Flush(); ok {
+		t.Fatal("empty flush")
+	}
+	t0 := clock.At(2026, 10, 1, 9, 0)
+	a.Add(t0, "x")
+	a.Add(t0, "y")
+	text, ok := a.Flush()
+	if !ok || text != "✓ 已收 2 条" {
+		t.Fatalf("text=%q ok=%v", text, ok)
+	}
+	if _, ok := a.Flush(); ok {
+		t.Fatal("must clear")
+	}
+}

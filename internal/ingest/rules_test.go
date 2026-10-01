@@ -63,3 +63,14 @@ func TestIsCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyIgnoresInvalidCategoryPrefix(t *testing.T) {
+	rules := model.Rules{Prefixes: []model.PrefixRule{{Prefix: "乱", Category: "bogus"}, {Prefix: "待办", Category: model.CatTodo}}}
+	p := Classify(Input{Text: "乱：x"}, rules, false)
+	if p.Category != model.CatInbox || p.CategoryBy != model.ByAI || p.Text != "乱：x" {
+		t.Fatalf("invalid-category prefix applied: %+v", p)
+	}
+	if p := Classify(Input{Text: "待办：y"}, rules, false); p.Category != model.CatTodo {
+		t.Fatalf("valid prefix lost: %+v", p)
+	}
+}

@@ -74,3 +74,9 @@ func TestDefaultSettings(t *testing.T) {
 		t.Fatal("missing 待研究 prefix")
 	}
 }
+
+func TestDefaultStatusUnknownCategory(t *testing.T) {
+	if got := DefaultStatus(Category("bogus")); got != StatusNew {
+		t.Fatalf("DefaultStatus(bogus) = %q, want %q", got, StatusNew)
+	}
+}

@@ -23,8 +23,8 @@ type QR struct {
 type Login struct {
 	BaseURL   string
 	HTTP      *http.Client
-	PollDelay time.Duration // 两次状态查询之间的间隔，防止服务端立即返回 wait 时空转
-	Timeout   time.Duration // 整个扫码过程的上限
+	PollDelay time.Duration // 两次状态查询之间的间隔，防止服务端立即返回 wait 时空转；<=0 用 500ms
+	Timeout   time.Duration // 整个扫码过程的上限；<=0 用 8 分钟
 }
 
 func NewLogin(hc *http.Client) *Login {
@@ -62,11 +62,15 @@ func (l *Login) Start(ctx context.Context, oldTokens []string) (QR, error) {
 
 // Wait 轮询扫码状态直到确认。verify 在手机上要求输入数字时调用；onState 收到每个非 wait 状态。
 func (l *Login) Wait(ctx context.Context, qr QR, verify func(context.Context) (string, error), onState func(string)) (Cred, error) {
-	if l.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, l.Timeout)
-		defer cancel()
+	timeout, pollDelay := l.Timeout, l.PollDelay
+	if timeout <= 0 {
+		timeout = 8 * time.Minute
 	}
+	if pollDelay <= 0 { // 字面量构造时零值会空转
+		pollDelay = 500 * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	base := strings.TrimRight(l.BaseURL, "/")
 	code := ""
 	for {
@@ -127,9 +131,12 @@ func (l *Login) Wait(ctx context.Context, qr QR, verify func(context.Context) (s
 			if c.BotToken == "" {
 				return Cred{}, errors.New("ilink: 确认登录但没有返回 bot_token")
 			}
+			if c.UserID == "" {
+				return Cred{}, errors.New("ilink: 登录确认但没有返回 ilink_user_id")
+			}
 			return c, nil
 		}
-		sleep(ctx, l.PollDelay)
+		sleep(ctx, pollDelay)
 	}
 }
 

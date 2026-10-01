@@ -107,6 +107,24 @@ func TestHandleTextWithPrefixAndAck(t *testing.T) {
 	}
 }
 
+func TestFlushAllAcksSendsImmediately(t *testing.T) {
+	e := newEnv(t, nil)
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "待办：交发票"))
+	e.svc.FlushAcks(context.Background())
+	if len(e.srv.Sent()) != 0 {
+		t.Fatal("regular flush sent inside quiet period")
+	}
+	e.svc.FlushAllAcks(context.Background())
+	sent := e.srv.Sent()
+	if len(sent) != 1 || !strings.HasPrefix(sent[0].Text, "✓ 已收：待办｜交发票") {
+		t.Fatalf("sent = %+v", sent)
+	}
+	e.svc.FlushAllAcks(context.Background())
+	if len(e.srv.Sent()) != 1 {
+		t.Fatal("flushed twice")
+	}
+}
+
 func TestHandleDuplicateIgnored(t *testing.T) {
 	e := newEnv(t, nil)
 	raw := ilinktest.TextMsg(1, ilinktest.OwnerID, "hello")

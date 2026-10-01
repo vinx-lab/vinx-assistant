@@ -160,6 +160,10 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	srv.Shutdown(sctx)
 	wg.Wait()
 	a.Ingest.Wait()
+	// 退出前把还没到点的合并回执发掉；ctx 已取消，另起一个 3 秒的。
+	fctx, fcancel := context.WithTimeout(context.Background(), 3*time.Second)
+	a.Ingest.FlushAllAcks(fctx)
+	fcancel()
 	a.Log.Info("Vinx 助手已退出")
 	return serveErr
 }
