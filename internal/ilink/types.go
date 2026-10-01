@@ -3,6 +3,7 @@
 package ilink
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,32 @@ const (
 	TypeVideo ItemType = 5
 )
 
+// ID 是容错的标识符类型：接受 JSON 数字、字符串或 null，永不报错（协议里 message_id、len、svr_id
+// 时而是数字、时而是字符串，甚至是空串），序列化为 JSON 字符串。
+type ID string
+
+func (i *ID) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if json.Unmarshal(b, &s) != nil {
+			s = ""
+		}
+		*i = ID(s)
+		return nil
+	}
+	if len(b) > 0 && (b[0] == '-' || (b[0] >= '0' && b[0] <= '9')) {
+		*i = ID(b)
+		return nil
+	}
+	*i = ""
+	return nil
+}
+
+func (i ID) MarshalJSON() ([]byte, error) { return json.Marshal(string(i)) }
+
+func (i ID) String() string { return string(i) }
+
 type Cred struct {
 	BotToken string    `json:"bot_token"`
 	BotID    string    `json:"ilink_bot_id"`
@@ -40,11 +67,13 @@ type Updates struct {
 	Buf     string    `json:"get_updates_buf"`
 	// 服务端建议的下一次长轮询超时（毫秒），客户端照此调整（与上游 monitor 一致）
 	LongPollTimeoutMs int `json:"longpolling_timeout_ms"`
+	// 解码失败的单条消息原文：不让一条坏消息卡住整批（游标照常前进），由调用方记录。
+	Undecodable []json.RawMessage `json:"-"`
 }
 
 type Message struct {
 	Seq          int64           `json:"seq"`
-	MessageID    json.Number     `json:"message_id"`
+	MessageID    ID              `json:"message_id"`
 	FromUserID   string          `json:"from_user_id"`
 	ToUserID     string          `json:"to_user_id"`
 	CreateTimeMs int64           `json:"create_time_ms"`
@@ -104,10 +133,10 @@ type VoiceItem struct {
 }
 
 type FileItem struct {
-	Media    Media       `json:"media"`
-	FileName string      `json:"file_name"`
-	MD5      string      `json:"md5"`
-	Len      json.Number `json:"len"`
+	Media    Media  `json:"media"`
+	FileName string `json:"file_name"`
+	MD5      string `json:"md5"`
+	Len      ID     `json:"len"`
 }
 
 type VideoItem struct {
@@ -130,7 +159,7 @@ type Item struct {
 type RefMessage struct {
 	MessageItem *Item           `json:"message_item,omitempty"`
 	Title       string          `json:"title,omitempty"`
-	SvrID       json.Number     `json:"svr_id,omitempty"`
+	SvrID       ID              `json:"svr_id,omitempty"`
 	PartialText json.RawMessage `json:"partial_text,omitempty"`
 }
 

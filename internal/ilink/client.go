@@ -151,14 +151,27 @@ func baseInfo() map[string]string {
 func (c *Client) GetUpdates(ctx context.Context, buf string) (*Updates, error) {
 	pctx, cancel := context.WithTimeout(ctx, c.PollTimeout())
 	defer cancel()
-	var u Updates
+	var env struct {
+		Updates
+		Msgs []json.RawMessage `json:"msgs"`
+	}
 	err := doJSON(pctx, c.http, http.MethodPost, c.BaseURL+"/ilink/bot/getupdates", c.token,
-		map[string]any{"get_updates_buf": buf, "base_info": baseInfo()}, &u)
+		map[string]any{"get_updates_buf": buf, "base_info": baseInfo()}, &env)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
 			return &Updates{Buf: buf}, nil
 		}
 		return nil, err
+	}
+	u := env.Updates
+	u.Msgs = nil
+	for _, raw := range env.Msgs {
+		var m Message
+		if err := json.Unmarshal(raw, &m); err != nil {
+			u.Undecodable = append(u.Undecodable, append(json.RawMessage(nil), raw...))
+			continue
+		}
+		u.Msgs = append(u.Msgs, m)
 	}
 	if u.LongPollTimeoutMs > 0 {
 		c.pollMs.Store(int64(u.LongPollTimeoutMs))
@@ -192,10 +205,10 @@ func (c *Client) SendText(ctx context.Context, to, contextToken, text string) (s
 		msg["context_token"] = contextToken
 	}
 	var st struct {
-		MessageID json.Number `json:"message_id"`
-		Ret       int         `json:"ret"`
-		ErrCode   int         `json:"errcode"`
-		ErrMsg    string      `json:"errmsg"`
+		MessageID ID     `json:"message_id"`
+		Ret       int    `json:"ret"`
+		ErrCode   int    `json:"errcode"`
+		ErrMsg    string `json:"errmsg"`
 	}
 	if err := doJSON(ctx, c.http, http.MethodPost, c.BaseURL+"/ilink/bot/sendmessage", c.token,
 		map[string]any{"msg": msg, "base_info": baseInfo()}, &st); err != nil {

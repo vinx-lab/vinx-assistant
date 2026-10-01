@@ -146,3 +146,24 @@ func TestDownloadMissingMedia(t *testing.T) {
 		t.Fatal("want 404 error")
 	}
 }
+
+func TestLenientIDsAndBadMessageDoNotBlockBatch(t *testing.T) {
+	c, srv := newClient(t)
+	srv.Push(`{"seq":1,"message_id":"abc","item_list":[{"type":4,"file_item":{"len":""}},{"type":1,"ref_msg":{"svr_id":"abc"}}]}`)
+	srv.Push(`{"seq":2,"message_id":2,"item_list":"oops"}`)
+	srv.Push(ilinktest.TextMsg(3, ilinktest.OwnerID, "ok"))
+	u, err := c.GetUpdates(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Msgs) != 2 || len(u.Undecodable) != 1 || u.Buf != "buf-1" {
+		t.Fatalf("msgs=%d undecodable=%d buf=%q", len(u.Msgs), len(u.Undecodable), u.Buf)
+	}
+	m := u.Msgs[0]
+	if m.Items[0].File.Len != "" || m.Items[1].RefMsg.SvrID != "abc" || m.ID() != "abc" || len(m.Raw) == 0 {
+		t.Fatalf("msg = %+v", m)
+	}
+	if !bytes.Contains(u.Undecodable[0], []byte("oops")) || u.Msgs[1].ID() != "3" {
+		t.Fatalf("undecodable=%s second=%+v", u.Undecodable[0], u.Msgs[1])
+	}
+}

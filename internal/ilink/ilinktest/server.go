@@ -139,6 +139,10 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	s.queue = nil
 	n := len(s.bufs)
 	s.mu.Unlock()
+	select { // 排掉没人等时 Push 留下的唤醒标记，免得之后的空轮询立刻返回
+	case <-s.wake:
+	default:
+	}
 	resp := map[string]any{"ret": 0, "msgs": msgs, "get_updates_buf": fmt.Sprintf("buf-%d", n)}
 	if s.PollHintMs > 0 {
 		resp["longpolling_timeout_ms"] = s.PollHintMs
@@ -175,7 +179,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ret": ret})
 		return
 	}
-	writeJSON(w, map[string]any{"ret": 0, "message_id": json.Number(id)})
+	writeJSON(w, map[string]any{"ret": 0, "message_id": id})
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
