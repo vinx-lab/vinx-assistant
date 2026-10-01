@@ -13,6 +13,7 @@ Vinx 助手（`vinx-assistant`）是单用户的微信收集箱：在微信里�
 - `make test`：全部单元测试和假后端链路测试。
 - `make vet`：静态检查。
 - `make build`：构建 `dist/vinx-assistant`。
+- `make check-upstream`：对照上游 Tencent/openclaw-weixin 的协议相关文件。集中实现前先跑一次；有变化时按 `internal/ilink/UPSTREAM.md` 的「同步流程」处理，协议同步单独成一个提交。
 - 测试只用 `t.TempDir()` 和 `httptest`，不连真实微信和真实 AI 服务。
 - 提交信息：`<type>(<包名>): <摘要>`，如 `feat(ingest): 前缀解析`。
 

@@ -1,0 +1,35 @@
+# 每周检查上游 openclaw-weixin 的协议相关文件，有变化就开（或更新）一个 issue。
+# 不打 agent:* 标签：是否交给 agent 由维护者决定。
+name: upstream-check
+on:
+  schedule:
+    - cron: "0 1 * * 1" # 每周一 09:00（上海）
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          go run ./tools/check-upstream > report.md
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat report.md
+      - if: steps.run.outputs.code == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="上游 openclaw-weixin 协议相关文件有变化"
+          n=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue comment "$n" --body-file report.md; else gh issue create --title "$title" --body-file report.md; fi
+      - if: steps.run.outputs.code == '2'
+        run: exit 1

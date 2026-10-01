@@ -1,0 +1,15 @@
+# 本项目 ilink 包对齐的上游版本。只在完成一次同步（改完代码、样例、测试）后更新：
+#   go run ./tools/check-upstream -update
+repo Tencent/openclaw-weixin
+version 2.4.9
+commit 24de5c9eb0dd5e595d7e2d090ed8a3f82870d42c
+file docs/protocol_zh_CN.md 59e5001dcced54052355580223362bfe94922000
+file docs/protocol.md 26662a266e8561d22189c6ffadd45d36da535c74
+file src/api/types.ts 276e845eea75d0e7f48e3a5d418f93636628481b
+file src/api/api.ts 5febfeaa45e1aa5e7c93ae9f00ea876f03c7995e
+file src/api/session-guard.ts 59d85f4372075b812ed32a990d6c7ca6bf5c371f
+file src/auth/login-qr.ts 002d8afb08e6db2039c34bd75c36dc4a2a6bd707
+file src/cdn/aes-ecb.ts 1a977439feda852fbbf15ebb7bdf8bb9dd689847
+file src/cdn/cdn-url.ts 1b77e5dd0adedaeb3f2f52d8e07eed8a4c238727
+file src/cdn/pic-decrypt.ts 34d92c29a03ecd133c94d06aa439cfc738c803d1
+file src/messaging/send.ts 0aaea1b2d9751d6b99772f1049de6b366d29f38e

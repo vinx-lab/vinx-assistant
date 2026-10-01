@@ -1,0 +1,31 @@
+{
+  "client_id": "<client_id>",
+  "context_token": "<context_token>",
+  "create_time_ms": 1790000000000,
+  "delete_time_ms": 0,
+  "from_user_id": "owner@im.wechat",
+  "group_id": "",
+  "item_list": [
+    {
+      "at_bot_username_list": [],
+      "button_item_list": [],
+      "create_time_ms": 1790000000000,
+      "is_completed": true,
+      "msg_id": "v1:1000000000000000001",
+      "text_item": {
+        "text": "示例文字"
+      },
+      "type": 1,
+      "update_time_ms": 1790000000000
+    }
+  ],
+  "message_id": 7000000000000000001,
+  "message_state": 2,
+  "message_type": 1,
+  "parent_id": 0,
+  "root_id": 0,
+  "seq": 1,
+  "session_id": "",
+  "to_user_id": "bot@im.bot",
+  "update_time_ms": 1790000000000
+}

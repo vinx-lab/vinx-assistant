@@ -3,6 +3,7 @@
 # make vet            静态检查
 # make build          本机平台 dist/vinx-assistant
 # make cross          dist/vinx-assistant-linux-amd64、dist/vinx-assistant-linux-arm64
+# make check-upstream  对照上游 openclaw-weixin，协议有变化时输出报告
 # make offline-build  只用 local.mk 提供的工具链、不联网（GOPROXY=off）也能编译；验证不依赖全局 Go 环境
 
 # 本机私有的 Go 环境（工具链、模块缓存、代理）写在 local.mk，不入库；没有时用 PATH 里的 go
@@ -14,7 +15,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 export CGO_ENABLED = 0
 
-.PHONY: test vet build cross offline-build clean
+.PHONY: test vet build cross offline-build check-upstream clean
 
 test:
 	$(GO) test ./...
@@ -31,6 +32,10 @@ cross:
 
 offline-build:
 	env -i HOME=$(HOME) PATH=/usr/bin:/bin GOENV=off GOPROXY=off $(MAKE) --no-print-directory build
+
+# 对照上游 openclaw-weixin 的协议相关文件（只读；有变化时退出码 1）
+check-upstream:
+	$(GO) run ./tools/check-upstream
 
 clean:
 	rm -rf dist
