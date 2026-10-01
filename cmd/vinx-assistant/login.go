@@ -14,6 +14,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/vinx-lab/vinx-assistant/internal/app"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
@@ -32,6 +33,9 @@ func cmdLogin(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if w := app.CheckPrivateDir(cfg.DataDir); w != "" {
+		fmt.Fprintln(stderr, "警告：", w)
 	}
 	st, err := store.Open(cfg.DBPath())
 	if err != nil {

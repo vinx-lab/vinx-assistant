@@ -68,6 +68,7 @@ func addFile(tw *tar.Writer, path, name string) error {
 		return err
 	}
 	h.Name = name
+	h.Uid, h.Gid, h.Uname, h.Gname = 0, 0, "", ""
 	if err := tw.WriteHeader(h); err != nil {
 		return err
 	}

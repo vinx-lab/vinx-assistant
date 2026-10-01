@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -92,10 +93,33 @@ func every(ctx context.Context, d time.Duration, fn func()) {
 	}
 }
 
+// CheckPrivateDir 在目录对组或其他用户可访问时返回警告文本，否则返回空串。
+// 数据目录和备份里有微信凭证，不自动 chmod，只提示。
+func CheckPrivateDir(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Sprintf("数据目录权限过宽（%04o），其中含微信凭证，请执行：chmod 700 %s", info.Mode().Perm(), path)
+	}
+	return ""
+}
+
 func (a *App) Run(ctx context.Context) error {
 	ln, err := net.Listen("tcp", a.Cfg.Listen)
 	if err != nil {
 		return err
+	}
+	return a.serve(ctx, ln)
+}
+
+// serve 在 ln 上提供 HTTP；无论正常退出还是 HTTP 出错，都先停掉全部后台协程再返回。
+func (a *App) serve(ctx context.Context, ln net.Listener) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if w := CheckPrivateDir(a.Cfg.DataDir); w != "" {
+		a.Log.Warn(w)
 	}
 	srv := &http.Server{Handler: a.Mux, ReadHeaderTimeout: 10 * time.Second}
 	a.Log.Info("Vinx 助手已启动", "listen", ln.Addr().String(), "data", a.Cfg.DataDir, "wechat", a.Session.Status(ctx))
@@ -122,18 +146,20 @@ func (a *App) Run(ctx context.Context) error {
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
+	var serveErr error
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			serveErr = err
 		}
+		cancel()
 	}
-	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer scancel()
 	srv.Shutdown(sctx)
 	wg.Wait()
 	a.Ingest.Wait()
 	a.Log.Info("Vinx 助手已退出")
-	return nil
+	return serveErr
 }

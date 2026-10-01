@@ -43,6 +43,9 @@ func TestWrite(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if h.Uname != "" || h.Gname != "" {
+			t.Fatalf("%s carries user names: %q %q", h.Name, h.Uname, h.Gname)
+		}
 		b, _ := io.ReadAll(tr)
 		files[h.Name] = b
 	}

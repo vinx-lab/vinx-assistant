@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -68,5 +69,45 @@ func TestServeHealthzAndTicks(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("run: %v", err)
+	}
+}
+
+func TestServeErrorStopsEverything(t *testing.T) {
+	a, err := New(Config{DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close() // Serve 会立刻返回非 ErrServerClosed 的错误
+	done := make(chan error, 1)
+	go func() { done <- a.serve(context.Background(), ln) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want serve error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not stop background goroutines and return")
+	}
+}
+
+func TestCheckPrivateDir(t *testing.T) {
+	d := t.TempDir()
+	if err := os.Chmod(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if CheckPrivateDir(d) == "" {
+		t.Fatal("0755 should warn")
+	}
+	os.Chmod(d, 0o700)
+	if w := CheckPrivateDir(d); w != "" {
+		t.Fatalf("0700 warned: %s", w)
+	}
+	if CheckPrivateDir(d+"/nope") != "" {
+		t.Fatal("missing dir should not warn")
 	}
 }

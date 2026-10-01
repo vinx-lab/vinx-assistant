@@ -20,4 +20,6 @@
 
 参数：`--listen`（`VINX_LISTEN`，默认 `0.0.0.0:3100`）、`--data`（`VINX_DATA`，默认 `~/.local/share/vinx-assistant`）。需要代理时设置标准的 `HTTPS_PROXY`。
 
+**凭证提示**：数据目录和 `backup` 导出的压缩包里含微信登录凭证（bot_token），请保持私有（目录权限 700），不要上传或分享。
+
 **安全提示**：第一期网页没有密码，请只在可信网络内监听。

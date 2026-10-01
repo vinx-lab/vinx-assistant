@@ -81,6 +81,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if *out == "" {
 			*out = "vinx-assistant-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
 		}
+		if w := app.CheckPrivateDir(cfg.DataDir); w != "" {
+			fmt.Fprintln(stderr, "警告：", w)
+		}
 		st, err := store.Open(cfg.DBPath())
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -99,6 +102,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if err := f.Close(); err != nil {
+			os.Remove(*out)
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
