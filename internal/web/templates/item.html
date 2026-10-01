@@ -1,53 +1,67 @@
 {{define "content"}}
 {{with .Item}}
-<article class="detail">
-  <h2>#{{.ID}} {{display .}}</h2>
-  <p class="meta">{{catName .Category}} · {{statusName .Status}} · 收到于 {{fmtTime .CreatedAt}}{{if .DueAt}} · 截止 {{due .}}{{end}}{{if .Tags}} · {{range .Tags}}#{{.}} {{end}}{{end}}</p>
-  {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a>{{if .LinkDesc}}<br><small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
-  {{if .Summary}}<p class="summary">{{.Summary}}</p>{{end}}
-  <h3>原文</h3>
-  <pre class="raw">{{.RawText}}</pre>
-  {{if .Detail}}<h3>整理笔记</h3><div class="md">{{md .Detail}}</div>{{end}}
+<p class="crumb"><a href="/?cat={{.Category}}">← 返回{{catName .Category}}</a></p>
+<article class="panel detail">
+  <h2 class="detail-title">#{{.ID}} {{display .}}</h2>
+  <p class="meta">
+    <span class="badge st">{{catName .Category}}</span>
+    <span class="badge st">{{statusName .Status}}</span>
+    {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
+    {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}</span>{{end}}
+    <span class="badge">收到于 {{fmtTime .CreatedAt}}</span>
+    {{range .Tags}}<a class="tag" href="/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}
+  </p>
+  {{if .URL}}<p class="link link-card"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a>{{if .LinkDesc}}<small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
+  {{if .Summary}}<p class="lead">{{.Summary}}</p>{{end}}
   {{if .ProcessError}}<p class="error">AI 处理失败（第 {{.ProcessAttempts}} 次）：{{.ProcessError}}</p>{{end}}
+  {{if .Detail}}<h3 class="sub">整理笔记</h3><div class="md">{{md .Detail}}</div>{{end}}
+  <h3 class="sub">原文</h3>
+  <pre class="raw">{{.RawText}}</pre>
 </article>
 {{end}}
 
 {{if .Atts}}
-<section>
-  <h3>附件</h3>
+<section class="panel">
+  <h2>附件</h2>
+  <div class="atts">
   {{range .Atts}}
-  <div class="att">
-    {{if ne .State "ok"}}<p class="meta">{{.Kind}} 下载{{if eq .State "failed"}}失败{{else}}中{{end}}：{{.LastError}}</p>
-    {{else if eq .Kind "image"}}<a href="/media/{{.RelPath}}" target="_blank"><img src="/media/{{.RelPath}}" alt="图片附件" loading="lazy"></a>
-    {{else if eq .Kind "voice"}}<p>语音（转写见原文）· <a href="/media/{{.RelPath}}?download=1">下载原文件</a></p>
-    {{else if eq .Kind "video"}}<p>视频 · <a href="/media/{{.RelPath}}?download=1">下载</a></p>
-    {{else}}<p>📎 <a href="/media/{{.RelPath}}">{{.FileName}}</a></p>{{end}}
-  </div>
+    {{if ne .State "ok"}}<div class="att"><span class="kind">{{.Kind}}</span><span class="meta-text">下载{{if eq .State "failed"}}失败{{else}}中{{end}}：{{.LastError}}</span></div>
+    {{else if eq .Kind "image"}}<div class="att img"><a href="/media/{{.RelPath}}" target="_blank"><img src="/media/{{.RelPath}}" alt="图片附件" loading="lazy"></a></div>
+    {{else if eq .Kind "voice"}}<div class="att"><span class="kind">语音</span>转写见原文 · <a href="/media/{{.RelPath}}?download=1">下载原文件</a></div>
+    {{else if eq .Kind "video"}}<div class="att"><span class="kind">视频</span><a href="/media/{{.RelPath}}?download=1">下载</a></div>
+    {{else}}<div class="att"><span class="kind">文件</span><a href="/media/{{.RelPath}}">{{.FileName}}</a></div>{{end}}
   {{end}}
+  </div>
 </section>
 {{end}}
 
-<section>
-  <h3>修改</h3>
+<section class="panel">
+  <h2>修改</h2>
   <form method="post" action="/items/{{.Item.ID}}" class="stack">
     <input type="hidden" name="updated_at" value="{{.Item.UpdatedAt.Unix}}">
-    <label>分类
-      <select name="category">{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Form.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select>
-    </label>
-    <label>标签（逗号或顿号分隔）<input name="tags" value="{{.Form.Tags}}"></label>
-    <label>截止日期<input type="date" name="due_date" value="{{.Form.DueDate}}"></label>
-    <label>时刻（可不填）<input type="time" name="due_time" value="{{.Form.DueTime}}"></label>
-    <label>优先级
-      <select name="priority">{{range .Priorities}}<option value="{{.}}" {{if eq (print .) $.Form.Priority}}selected{{end}}>{{prioName .}}</option>{{end}}</select>
-    </label>
-    <button type="submit">保存</button>
+    <div class="grid2">
+      <label>分类
+        <select name="category">{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Form.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select>
+      </label>
+      <label>优先级
+        <select name="priority">{{range .Priorities}}<option value="{{.}}" {{if eq (print .) $.Form.Priority}}selected{{end}}>{{prioName .}}</option>{{end}}</select>
+      </label>
+      <label>截止日期<input type="date" name="due_date" value="{{.Form.DueDate}}"></label>
+      <label>时刻 <small>可不填</small><input type="time" name="due_time" value="{{.Form.DueTime}}"></label>
+      <label class="full">标签 <small>逗号或顿号分隔</small><input name="tags" value="{{.Form.Tags}}"></label>
+    </div>
+    <div class="form-foot"><button type="submit" class="primary">保存</button></div>
   </form>
-  {{if ne .Item.Level "deep"}}
+</section>
+{{if ne .Item.Level "deep"}}
+<section class="panel">
+  <h2>深入研究</h2>
+  <p class="hint">交给深度档模型重新整理，默认等下一批次。</p>
   <form method="post" action="/items/{{.Item.ID}}/deep" class="inline">
     <input type="hidden" name="back" value="/items/{{.Item.ID}}">
-    <label><input type="checkbox" name="now" value="1"> 立即整理</label>
+    <label class="check"><input type="checkbox" name="now" value="1"> 立即整理</label>
     <button type="submit">深入研究</button>
   </form>
-  {{end}}
 </section>
+{{end}}
 {{end}}

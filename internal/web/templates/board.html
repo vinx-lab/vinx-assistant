@@ -1,54 +1,64 @@
 {{define "content"}}
-{{with .Status}}
-<section class="status">
-  <span class="pill {{if .Overdue}}warn{{end}}">逾期 {{.Overdue}}</span>
-  <span class="pill">今天到期 {{.DueToday}}</span>
-  {{if eq .WeChat "ok"}}<span class="pill ok">微信正常</span>
-  {{else if eq .WeChat "paused"}}<span class="pill warn">微信暂停（-14），{{.PausedUntil}} 自动重试</span>
-  {{else}}<a class="pill warn" href="/login">微信未登录</a>{{end}}
-  {{if .NeedRelogin}}<a class="pill warn" href="/login">凭证反复失效，建议重新扫码</a>{{end}}
-  <span class="pill">今日 token {{.TokensToday}}{{if .TokenLimit}} / {{.TokenLimit}}{{else}}（不限）{{end}}</span>
-  {{if .Running}}<span class="pill">正在整理…</span>{{else if .NextBatch}}<span class="pill">下次整理 {{.NextBatch}}</span>{{end}}
-  {{if .Drift}}<span class="pill warn">收到 {{.Drift}} 个协议之外的字段，可能上游协议有变化，运行 make check-upstream 对照</span>{{end}}
+<section class="board-head" aria-label="概况">
+  {{with .Status}}
+  <div class="chips">
+    <span class="chip key {{if .Overdue}}warn{{end}}">逾期 {{.Overdue}}</span>
+    <span class="chip key">今天到期 {{.DueToday}}</span>
+    {{if eq .WeChat "ok"}}<span class="chip ok">微信正常</span>
+    {{else if eq .WeChat "paused"}}<span class="chip warn">微信暂停（-14），{{.PausedUntil}} 自动重试</span>
+    {{else}}<a class="chip warn" href="/login">微信未登录</a>{{end}}
+    {{if .NeedRelogin}}<a class="chip warn" href="/login">凭证反复失效，建议重新扫码</a>{{end}}
+    <span class="chip">今日 token {{.TokensToday}}{{if .TokenLimit}} / {{.TokenLimit}}{{else}}（不限）{{end}}</span>
+    {{if .Drift}}<span class="chip warn">收到 {{.Drift}} 个协议之外的字段，可能上游协议有变化，运行 make check-upstream 对照</span>{{end}}
+  </div>
+  {{end}}
+  <div class="run">
+    <span class="hint">{{if .Status.Running}}正在整理…{{else if .Status.NextBatch}}下次整理 {{.Status.NextBatch}}{{end}}</span>
+    <form method="post" action="/batch/run">
+      <input type="hidden" name="back" value="{{.Back}}">
+      <button type="submit" class="primary" {{if .Status.Running}}disabled{{end}}>立即整理</button>
+    </form>
+  </div>
 </section>
-{{end}}
-<form method="post" action="/batch/run" class="inline">
-  <input type="hidden" name="back" value="{{.Back}}">
-  <button type="submit" {{if .Status.Running}}disabled{{end}}>立即整理</button>
-</form>
 
-<nav class="tabs">
+<nav class="tabs" aria-label="分类">
   {{range .Tabs}}<a href="{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{.Name}} <b>{{.Count}}</b></a>{{end}}
 </nav>
-<p class="filters">
-  {{if .All}}<a href="/?cat={{.Cat}}{{if .Tag}}&tag={{.Tag}}{{end}}">只看未处理</a>{{else}}<a href="/?cat={{.Cat}}&all=1{{if .Tag}}&tag={{.Tag}}{{end}}">显示全部</a>{{end}}
-  {{if .Tag}}· 标签「{{.Tag}}」 <a href="/?cat={{.Cat}}{{if .All}}&all=1{{end}}">清除</a>{{end}}
-</p>
-{{if .Tags}}<p class="tags">{{range .Tags}}<a href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.All}}&all=1{{end}}">#{{.Name}} {{.Count}}</a> {{end}}</p>{{end}}
+<div class="filters">
+  {{if .All}}<a href="/?cat={{.Cat}}{{if .Tag}}&tag={{.Tag}}{{end}}">只看未处理</a>{{else}}<a href="/?cat={{.Cat}}&all=1{{if .Tag}}&tag={{.Tag}}{{end}}">显示全部（含已处理）</a>{{end}}
+  {{if .Tag}}<span>标签「{{.Tag}}」</span><a href="/?cat={{.Cat}}{{if .All}}&all=1{{end}}">清除筛选</a>{{end}}
+</div>
+{{if .Tags}}<div class="tags" aria-label="标签">{{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.All}}&all=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
 
+<div class="list">
 {{range .Items}}
-<article class="card">
-  {{with index $.Thumbs .ID}}<img class="thumb" src="/media/{{.}}" alt="" loading="lazy">{{end}}
-  <h3><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a></h3>
-  {{if .Summary}}<p>{{.Summary}}</p>{{end}}
-  <p class="meta">
-    {{statusName .Status}}
-    {{if .Priority}}· 优先级 {{prioName .Priority}}{{end}}
-    {{if .DueAt}}· <span class="{{if overdue .}}overdue{{end}}">截止 {{due .}}</span>{{end}}
-    {{range .Tags}} <a href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
-  </p>
-  {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a></p>{{end}}
+<article class="card {{if .Priority}}prio-{{.Priority}}{{end}}">
+  <div class="card-row">
+    <div class="card-main">
+      <h3><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a></h3>
+      {{if .Summary}}<p class="summary-text">{{.Summary}}</p>{{end}}
+      <p class="meta">
+        <span class="badge st">{{statusName .Status}}</span>
+        {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
+        {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}</span>{{end}}
+        {{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
+      </p>
+      {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a></p>{{end}}
+    </div>
+    {{with index $.Thumbs .ID}}<img class="thumb" src="/media/{{.}}" alt="" loading="lazy" width="64" height="64">{{end}}
+  </div>
   <div class="actions">
     {{$it := .}}
     {{range statusChoices .}}
     <form method="post" action="/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit">{{statusName .}}</button></form>
     {{end}}
     {{if ne .Level "deep"}}
-    <form method="post" action="/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit">深入研究</button></form>
+    <form method="post" action="/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit" class="ghost">深入研究</button></form>
     {{end}}
   </div>
 </article>
 {{else}}
 <p class="empty">这里还没有条目。</p>
 {{end}}
+</div>
 {{end}}

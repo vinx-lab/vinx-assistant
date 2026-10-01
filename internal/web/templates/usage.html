@@ -1,17 +1,24 @@
 {{define "content"}}
-<p class="status"><span class="pill">今日整理已用 {{.Today}}{{if .Limit}} / 上限 {{.Limit}}{{else}}（不限）{{end}}</span> <span class="pill">今日指令 {{.TodayCommand}}（不计入上限）</span></p>
-<section>
-  <h2>最近 30 天</h2>
+<div class="stats">
+  <div class="stat"><span class="k">今日整理已用</span><span class="v">{{.Today}}{{if .Limit}}<small> / {{.Limit}} 上限</small>{{else}}<small>（不限）</small>{{end}}</span></div>
+  <div class="stat"><span class="k">今日指令</span><span class="v">{{.TodayCommand}}<small> 不计入上限</small></span></div>
+</div>
+<section class="panel">
+  <div class="section-head"><h2>最近 30 天</h2><span class="hint">token，整理 + 指令</span></div>
+  {{if .Days}}
+  <div class="bars">
   {{range .Days}}
-  <div class="bar"><span class="day">{{.Day}}</span><span class="track"><span class="fill w{{pct .Total $.Max}}"></span></span><span class="num">整理 {{.Organize}} + 指令 {{.Command}} = {{.Total}}</span></div>
+  <div class="bar"><span class="day">{{.Day}}</span><span class="track" aria-hidden="true"><span class="fill w{{pct .Total $.Max}}"></span></span><span class="num">整理 {{.Organize}} + 指令 {{.Command}} = {{.Total}}</span></div>
+  {{end}}
+  </div>
   {{else}}<p class="empty">还没有 AI 调用记录。</p>{{end}}
 </section>
-<section>
+<section class="panel">
   <h2>消耗最多的条目</h2>
-  {{range .Top}}<p><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a> · {{.TokensUsed}}</p>{{else}}<p class="empty">无</p>{{end}}
+  {{if .Top}}<ul class="rows">{{range .Top}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">{{.TokensUsed}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>
-<section>
+<section class="panel">
   <h2>处理失败的条目</h2>
-  {{range .Failed}}<p><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a> · 第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</p>{{else}}<p class="empty">无</p>{{end}}
+  {{if .Failed}}<ul class="rows">{{range .Failed}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>
 {{end}}
