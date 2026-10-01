@@ -189,9 +189,22 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	}
 	if _, err := s.Store.InsertItem(ctx, it); err != nil {
 		if errors.Is(err, store.ErrDuplicate) {
+			// 重放路径：条目已在，补一次标签（AddTags 幂等合并）
+			if len(p.Labels) > 0 {
+				if old, gerr := s.Store.GetItemByMsgID(ctx, id); gerr == nil {
+					if terr := s.Store.AddTags(ctx, old.ID, p.Labels); terr != nil {
+						return terr
+					}
+				}
+			}
 			return s.Store.MarkSeen(ctx, id, now)
 		}
 		return err
+	}
+	if len(p.Labels) > 0 {
+		if err := s.Store.AddTags(ctx, it.ID, p.Labels); err != nil {
+			return err
+		}
 	}
 	for i, mi := range f.media {
 		s.saveAttachment(ctx, it.ID, i, mi, now)

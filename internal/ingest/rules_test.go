@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/vinx-lab/vinx-assistant/internal/model"
@@ -41,10 +42,34 @@ func TestClassify(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := Classify(c.in, rules, c.images)
-		want := Parsed{Category: c.cat, CategoryBy: c.by, Level: c.level, Text: c.text}
-		if got != want {
+		want := Parsed{Category: c.cat, CategoryBy: c.by, Level: c.level, Text: c.text, Labels: got.Labels}
+		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: got %+v, want %+v", c.name, got, want)
 		}
+	}
+}
+
+func TestClassifyLabels(t *testing.T) {
+	rules := model.DefaultSettings().Rules
+	cases := []struct {
+		name   string
+		text   string
+		cat    model.Category
+		labels []string
+	}{
+		{"多个关键词多个标签", "这个想法也算待办", model.CatIdea, []string{"点子", "待办"}},
+		{"代办同待办", "代办，交发票", model.CatTodo, []string{"待办"}},
+		{"去重", "待研究：研究一下 htmx", model.CatResearch, []string{"待研究"}},
+		{"无关键词", "今天天气不错", model.CatInbox, nil},
+	}
+	for _, c := range cases {
+		got := Classify(Input{Text: c.text}, rules, false)
+		if got.Category != c.cat || !reflect.DeepEqual(got.Labels, c.labels) {
+			t.Errorf("%s: cat=%s labels=%q, want %s %q", c.name, got.Category, got.Labels, c.cat, c.labels)
+		}
+	}
+	if got := Classify(Input{HasImage: true}, rules, false); len(got.Labels) != 0 {
+		t.Errorf("无文字图片不应有标签: %q", got.Labels)
 	}
 }
 

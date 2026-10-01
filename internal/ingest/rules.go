@@ -2,6 +2,7 @@
 package ingest
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -19,7 +20,8 @@ type Parsed struct {
 	Category   model.Category
 	CategoryBy model.CategoryBy
 	Level      model.Level
-	Text       string // 关键词在开头时去掉关键词后的文本，否则是原文
+	Text       string   // 关键词在开头时去掉关键词后的文本，否则是原文
+	Labels     []string // 文本里每个分类关键词对应的分类名，去重，按最早出现顺序；入库时作为标签
 }
 
 func isSep(r rune) bool {
@@ -62,9 +64,37 @@ func matchKeyword(text string, prefixes []model.PrefixRule) (model.Category, str
 	return cat, rest, true
 }
 
+// keywordLabels 返回文本里每个合法分类关键词对应的分类名，按最早出现顺序去重。
+func keywordLabels(text string, prefixes []model.PrefixRule) []string {
+	type hit struct {
+		pos  int
+		name string
+	}
+	var hits []hit
+	for _, p := range prefixes {
+		if p.Prefix == "" || !model.ValidCategory(p.Category) {
+			continue
+		}
+		if pos := strings.Index(text, p.Prefix); pos >= 0 {
+			hits = append(hits, hit{pos, model.CategoryName(p.Category)})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].pos < hits[j].pos })
+	var out []string
+	seen := map[string]bool{}
+	for _, h := range hits {
+		if !seen[h.name] {
+			seen[h.name] = true
+			out = append(out, h.name)
+		}
+	}
+	return out
+}
+
 func Classify(in Input, rules model.Rules, aiImages bool) Parsed {
 	text := strings.TrimSpace(in.Text)
 	p := Parsed{Category: model.CatInbox, CategoryBy: model.ByAI, Level: model.LevelLight, Text: text}
+	p.Labels = model.NormalizeTags(keywordLabels(text, rules.Prefixes))
 	if cat, rest, ok := matchKeyword(text, rules.Prefixes); ok {
 		p.Category, p.CategoryBy, p.Text = cat, model.ByPrefix, rest
 	} else if text == "" && in.HasImage && !aiImages {

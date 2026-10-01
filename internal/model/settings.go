@@ -1,6 +1,6 @@
 package model
 
-// PrefixRule 是分类关键词，出现在消息任何位置都算（JSON 字段名沿用 prefixes，兼容已存的设置）。
+// PrefixRule 是分类关键词，出现在消息任何位置都算，命中即给条目打上对应分类名的标签（JSON 字段名沿用 prefixes，兼容已存的设置）。
 type PrefixRule struct {
 	Prefix   string   `json:"prefix"`
 	Category Category `json:"category"`

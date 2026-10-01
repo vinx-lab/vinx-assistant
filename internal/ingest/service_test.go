@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -104,6 +105,15 @@ func TestHandleTextWithPrefixAndAck(t *testing.T) {
 	sent := e.srv.Sent()
 	if len(sent) != 1 || !strings.HasPrefix(sent[0].Text, "✓ 已收：待办｜月底前交发票") {
 		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestHandleKeywordsBecomeTags(t *testing.T) {
+	e := newEnv(t, nil)
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "这个想法也算待办"))
+	it := e.item(t, 1)
+	if !reflect.DeepEqual(it.Tags, []string{"待办", "点子"}) || it.Category != model.CatIdea {
+		t.Fatalf("cat=%s tags=%v", it.Category, it.Tags)
 	}
 }
 
