@@ -1,0 +1,22 @@
+# Vinx 助手 systemd 用户单元模板。
+# 安装（示例，属于改系统配置，执行前先确认）：
+#   install -m 755 dist/vinx-assistant ~/.local/bin/
+#   install -m 644 deploy/vinx-assistant.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now vinx-assistant
+#   loginctl enable-linger "$USER"   # 不登录也常驻
+# 日志：journalctl --user -u vinx-assistant -f
+[Unit]
+Description=Vinx 助手（微信收集箱）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/vinx-assistant serve
+Environment=VINX_LISTEN=0.0.0.0:3100
+# systemd 服务不继承 shell 的代理变量；需要代理时取消注释并改成实际地址
+# Environment=HTTPS_PROXY=http://127.0.0.1:7890
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

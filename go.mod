@@ -3,6 +3,7 @@ module github.com/vinx-lab/vinx-assistant
 go 1.27.1
 
 require (
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/net v0.59.0
 	golang.org/x/text v0.42.0
 	modernc.org/sqlite v1.59.0
