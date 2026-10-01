@@ -137,7 +137,7 @@ func TestSigninPageModes(t *testing.T) {
 		want         string
 	}{
 		{"微信和密码", "ok", true, 200, true, true, "微信验证码登录"},
-		{"只有微信", "ok", false, 200, true, false, "把下面这段文字发给 Bot"},
+		{"只有微信", "ok", false, 200, true, false, "「登录」两个字也要发"},
 		{"只有密码", "", true, 200, false, true, "暂时只能用密码登录"},
 		{"微信暂停中", "paused", true, 200, false, true, "暂时只能用密码登录"},
 		{"都没有", "", false, 503, false, false, "vinx-assistant password --no-login"},

@@ -16,7 +16,7 @@
   <section class="card signin-code"{{if .Code}} data-signin-poll data-next="{{.Next}}"{{end}}>
     <h1>微信验证码登录</h1>
     {{if .Code}}
-    <p class="hint">在微信里把下面这段文字发给 Bot，2 分钟内有效：</p>
+    <p class="hint">在微信里把下面这段文字<strong>整段</strong>发给 Bot（前面的「登录」两个字也要发，只发数字不算），2 分钟内有效：</p>
     <p class="code">{{.CodeText}}</p>
     <button type="button" class="btn copy-btn" data-copy="{{.CodeText}}" hidden>复制</button>
     <p class="warn-box" role="note">只把你自己屏幕上的验证码发给 Bot；别人发来的验证码不要转发，那会让对方登录你的网页。</p>
