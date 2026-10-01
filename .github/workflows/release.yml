@@ -1,0 +1,102 @@
+# Go 项目自动发布模板：推送 v* 标签时 测试 → 交叉编译 5 个平台 → 打包 → 创建 GitHub Release。
+#
+#   git tag -a v0.1.0 -m "<项目> 0.1.0" && git push origin v0.1.0
+#
+# 使用前改 env 里的三项：APP（可执行文件名）、MAIN（main 包路径）、VERSION_VAR（-X 注入的版本变量，
+# 必须是 var 不是 const；项目没有版本变量时留空）。
+# 发布说明取 CHANGELOG.md 里「## [版本号]」那一节，找不到就用 GitHub 自动生成的说明；同名 Release 已存在时只覆盖附件。
+# 手动运行（Actions 页面 Run workflow）只做测试、编译和打包，产物保留 1 天，不创建 Release。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP: vinx-assistant
+  MAIN: ./cmd/vinx-assistant
+  VERSION_VAR: main.version
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 测试
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+
+      - name: 确定版本号
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: 编译与打包
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ldflags="-s -w"
+          [[ -n "$VERSION_VAR" ]] && ldflags="$ldflags -X $VERSION_VAR=$VERSION"
+          mkdir -p dist
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos=${platform%/*}; goarch=${platform#*/}; ext=""
+            [[ "$goos" == windows ]] && ext=".exe"
+            out="dist/$APP-$goos-$goarch$ext"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags "$ldflags" -o "$out" "$MAIN"
+          done
+          cd dist
+          for f in "$APP"-*; do
+            case "$f" in
+              *.exe) cp "$f" "$APP.exe" && zip -q "${f%.exe}.zip" "$APP.exe" && rm "$APP.exe" ;;
+              *) tar czf "$f.tar.gz" --transform "s#^$f\$#$APP#" "$f" ;;
+            esac
+          done
+          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 保留构建产物（手动运行时）
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP }}-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          retention-days: 1
+
+      - name: 创建 Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          assets=(dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt)
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            exit 0
+          fi
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [[ -s notes.md ]]; then
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "$APP $VERSION" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "$APP $VERSION" --generate-notes
+          fi

@@ -1,0 +1,3 @@
+# 检出时不做任何换行转换（Windows 上 core.autocrlf=true 会把 LF 换成 CRLF，
+# 内嵌资源的哈希、测试的对照数据就会对不上）。
+* -text
