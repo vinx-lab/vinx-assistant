@@ -1,8 +1,6 @@
 // Package web 是 Vinx 助手的网页：看板、详情、搜索、设置、用量、扫码登录。
 // 服务端用 html/template 渲染，模板、样式和少量脚本用 embed 打包，不引用任何外部资源。
 //
-// 目前只有骨架和扫码登录（从计划 4 提前实现）；其余页面由计划 4 在此基础上补齐。
-//
 // 第一期没有登录密码（spec 已接受，靠网络边界保护）。所有 POST 都经过 http.CrossOriginProtection，
 // 防止别的网页借浏览器偷偷提交表单（比如改服务商地址把 API 密钥发出去）。
 package web
@@ -57,7 +55,7 @@ type Server struct {
 	hosts *hostGuard
 }
 
-var pageNames = []string{"login", "settings"}
+var pageNames = []string{"board", "item", "login", "settings"}
 
 func New(d Deps) *Server {
 	if d.Log == nil {
@@ -86,8 +84,12 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(h)) }
 	post := func(pattern string, h http.HandlerFunc) { mux.Handle("POST "+pattern, s.secure(cop.Handler(h))) }
 
-	// 计划 4 Task 3 把这里换成看板。
-	get("/{$}", func(w http.ResponseWriter, r *http.Request) { redirect(w, r, "/login") })
+	get("/{$}", s.board)
+	post("/batch/run", s.batchRun)
+	post("/items/{id}/status", s.itemStatus)
+	post("/items/{id}/deep", s.itemDeep)
+	get("/items/{id}", s.itemPage)
+	post("/items/{id}", s.itemSave)
 	get("/settings", s.settingsPage)
 	post("/settings/general", s.settingsGeneral)
 	post("/settings/models", s.settingsModels)
@@ -181,11 +183,37 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// funcs 只含不依赖计划 2/3 的模板函数；计划 4 补齐 display、statusName、due 等。
 func (s *Server) funcs() template.FuncMap {
 	return template.FuncMap{
+		"display":    func(it model.Item) string { return it.DisplayTitle() },
+		"catName":    model.CategoryName,
+		"statusName": model.StatusName,
+		"prioName":   func(p model.Priority) string { return priorityNames[p] },
+		"due": func(it model.Item) string {
+			if it.DueAt == nil {
+				return ""
+			}
+			return model.FormatDue(*it.DueAt, it.DueHasTime, s.d.Clock.Now())
+		},
+		"overdue": func(it model.Item) bool { return isOverdue(it, s.d.Clock.Now()) },
+		"statusChoices": func(it model.Item) []string {
+			var out []string
+			for _, st := range statusOrder {
+				if st != it.Status && model.ValidStatus(it.Category, st) {
+					out = append(out, st)
+				}
+			}
+			return out
+		},
+		"md":      renderMarkdown,
 		"secret":  redact.Secret,
 		"fmtTime": func(t time.Time) string { return t.In(clock.Zone).Format("2006-01-02 15:04") },
 		"join":    strings.Join,
+		"pct": func(v, max int64) int64 {
+			if max <= 0 {
+				return 0
+			}
+			return v * 100 / max
+		},
 	}
 }

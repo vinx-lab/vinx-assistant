@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,9 @@ type env struct {
 	ilink *ilinktest.Server
 	srv   *httptest.Server
 	media string // 媒体目录（<tmp>/media）
+
+	batches atomic.Int32 // BatchNow 成功启动的次数
+	running atomic.Bool  // 模拟「正在整理」
 }
 
 func newEnv(t *testing.T) *env {
@@ -48,6 +52,17 @@ func newEnv(t *testing.T) *env {
 	e.media = filepath.Join(dir, "media")
 	d := Deps{
 		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: e.media,
+		BatchNow: func() bool {
+			if e.running.Load() {
+				return false
+			}
+			e.batches.Add(1)
+			return true
+		},
+		BatchRunning: e.running.Load,
+		NextBatch: func(now time.Time, times []string) (time.Time, bool) {
+			return clock.At(2026, 10, 1, 20, 0), len(times) > 0
+		},
 		ListModels: func(ctx context.Context, p model.Provider) ([]string, error) {
 			if p.Name == "坏的" {
 				return nil, errors.New("HTTP 401: invalid key " + p.APIKey)
@@ -103,6 +118,15 @@ func (e *env) postFrom(t *testing.T, path string, form url.Values, site string) 
 	return resp, string(b)
 }
 
+func (e *env) item(t *testing.T, it *model.Item) int64 {
+	t.Helper()
+	id, err := e.st.InsertItem(context.Background(), it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func mustContain(t *testing.T, body string, want ...string) {
 	t.Helper()
 	for _, w := range want {
@@ -142,16 +166,13 @@ func TestSafeBack(t *testing.T) {
 	}
 }
 
-func TestRootRedirectsToLogin(t *testing.T) {
+func TestRootIsBoard(t *testing.T) {
 	e := newEnv(t)
-	resp, err := e.client().Get(e.srv.URL + "/")
-	if err != nil {
-		t.Fatal(err)
+	code, body := e.get(t, "/")
+	if code != http.StatusOK {
+		t.Fatalf("code %d", code)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/login" {
-		t.Fatalf("got %d %q", resp.StatusCode, resp.Header.Get("Location"))
-	}
+	mustContain(t, body, `<a href="/" aria-current="page">看板</a>`, `href="/settings"`, `href="/login"`)
 }
 
 func TestCrossSitePostRejected(t *testing.T) {

@@ -1,0 +1,52 @@
+{{define "content"}}
+{{with .Item}}
+<article class="detail">
+  <h2>#{{.ID}} {{display .}}</h2>
+  <p class="meta">{{catName .Category}} · {{statusName .Status}} · 收到于 {{fmtTime .CreatedAt}}{{if .DueAt}} · 截止 {{due .}}{{end}}{{if .Tags}} · {{range .Tags}}#{{.}} {{end}}{{end}}</p>
+  {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a>{{if .LinkDesc}}<br><small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
+  {{if .Summary}}<p class="summary">{{.Summary}}</p>{{end}}
+  <h3>原文</h3>
+  <pre class="raw">{{.RawText}}</pre>
+  {{if .Detail}}<h3>整理笔记</h3><div class="md">{{md .Detail}}</div>{{end}}
+  {{if .ProcessError}}<p class="error">AI 处理失败（第 {{.ProcessAttempts}} 次）：{{.ProcessError}}</p>{{end}}
+</article>
+{{end}}
+
+{{if .Atts}}
+<section>
+  <h3>附件</h3>
+  {{range .Atts}}
+  <div class="att">
+    {{if ne .State "ok"}}<p class="meta">{{.Kind}} 下载{{if eq .State "failed"}}失败{{else}}中{{end}}：{{.LastError}}</p>
+    {{else if eq .Kind "image"}}<a href="/media/{{.RelPath}}" target="_blank"><img src="/media/{{.RelPath}}" alt="图片附件" loading="lazy"></a>
+    {{else if eq .Kind "voice"}}<p>语音（转写见原文）· <a href="/media/{{.RelPath}}?download=1">下载原文件</a></p>
+    {{else if eq .Kind "video"}}<p>视频 · <a href="/media/{{.RelPath}}?download=1">下载</a></p>
+    {{else}}<p>📎 <a href="/media/{{.RelPath}}">{{.FileName}}</a></p>{{end}}
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+<section>
+  <h3>修改</h3>
+  <form method="post" action="/items/{{.Item.ID}}" class="stack">
+    <label>分类
+      <select name="category">{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Form.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select>
+    </label>
+    <label>标签（逗号或顿号分隔）<input name="tags" value="{{.Form.Tags}}"></label>
+    <label>截止日期<input type="date" name="due_date" value="{{.Form.DueDate}}"></label>
+    <label>时刻（可不填）<input type="time" name="due_time" value="{{.Form.DueTime}}"></label>
+    <label>优先级
+      <select name="priority">{{range .Priorities}}<option value="{{.}}" {{if eq (print .) $.Form.Priority}}selected{{end}}>{{prioName .}}</option>{{end}}</select>
+    </label>
+    <button type="submit">保存</button>
+  </form>
+  {{if ne .Item.Level "deep"}}
+  <form method="post" action="/items/{{.Item.ID}}/deep" class="inline">
+    <input type="hidden" name="back" value="/items/{{.Item.ID}}">
+    <label><input type="checkbox" name="now" value="1"> 立即整理</label>
+    <button type="submit">深入研究</button>
+  </form>
+  {{end}}
+</section>
+{{end}}
