@@ -1,0 +1,14 @@
+{{define "content"}}
+<section class="login" data-login-state="{{.Status.State}}">
+  <p>当前微信连接：{{if eq .WeChat "ok"}}正常{{else if eq .WeChat "paused"}}暂停中（凭证失效 -14，会自动重试）{{else}}未登录{{end}}</p>
+  <p id="login-msg">{{.Status.Message}}</p>
+  <img id="login-qr" src="/login/qr.png" alt="微信登录二维码" width="280" height="280" {{if not .Status.HasQR}}hidden{{end}}>
+  <form method="post" action="/login/verify" id="login-verify" class="inline" {{if ne .Status.State "need_verify"}}hidden{{end}}>
+    <label>手机上显示的数字<input name="code" inputmode="numeric" autocomplete="one-time-code"></label>
+    <button type="submit">提交</button>
+  </form>
+  <form method="post" action="/login/start" class="inline">
+    <button type="submit">{{if eq .WeChat "ok"}}重新扫码{{else}}获取二维码{{end}}</button>
+  </form>
+</section>
+{{end}}

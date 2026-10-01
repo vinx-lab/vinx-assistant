@@ -1,0 +1,24 @@
+{{define "layout"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Vinx 助手</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Vinx 助手</a>
+  <nav>
+    {{/* 计划 4 Task 3–7 恢复：看板、搜索、用量、设置 */}}
+    <a href="/login" {{if eq .Nav "login"}}aria-current="page"{{end}}>微信</a>
+  </nav>
+</header>
+<main>
+{{if .Msg}}<p class="flash">{{.Msg}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}

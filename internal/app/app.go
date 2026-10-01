@@ -16,10 +16,12 @@ import (
 
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/enrich"
+	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/ingest"
 	"github.com/vinx-lab/vinx-assistant/internal/notify"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
+	"github.com/vinx-lab/vinx-assistant/internal/web"
 )
 
 type Config struct {
@@ -73,6 +75,10 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 	a.Mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "wechat": a.Session.Status(r.Context())})
+	})
+	web.Register(a.Mux, web.Deps{
+		Store: st, Session: a.Session, Clock: a.Clock, MediaDir: cfg.MediaDir(), Log: log,
+		NewLogin: func() *ilink.Login { return ilink.NewLogin(hc) },
 	})
 	// 计划 2–4 在这里追加装配。
 	return a, nil

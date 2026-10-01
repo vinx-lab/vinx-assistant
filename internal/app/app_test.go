@@ -61,6 +61,14 @@ func TestServeHealthzAndTicks(t *testing.T) {
 	if json.Unmarshal(body, &h); h["status"] != "ok" || h["wechat"] != "no_cred" {
 		t.Fatalf("healthz = %s", body)
 	}
+	lr, err := http.Get("http://" + cfg.Listen + "/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lr.Body.Close()
+	if lr.StatusCode != 200 {
+		t.Fatalf("/login = %d", lr.StatusCode)
+	}
 	select {
 	case <-tk.n:
 	case <-time.After(2 * time.Second):
