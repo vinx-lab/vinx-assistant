@@ -10,7 +10,7 @@
       <label>API 地址<input name="base_url" value="{{.BaseURL}}" required inputmode="url"></label>
       <label class="full">密钥 <small>当前 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}，留空不改；改了 API 地址须重填</small><input name="api_key" type="password" autocomplete="off"></label>
     </div>
-    <p class="models-out" data-models-out="{{.ID}}" role="status"></p>
+    <p class="models-out" data-models-out="{{.ID}}" role="status">{{if .Models}}已保存 {{len .Models}} 个模型{{else}}还没有拉取模型列表{{end}}</p>
     <div class="form-foot start">
       <button type="submit" class="primary">保存</button>
       <button type="button" data-models="{{.ID}}">拉取模型列表</button>
@@ -31,7 +31,7 @@
 
 <section class="panel">
   <h2>三档模型</h2>
-  <p class="hint">三档建议都用 deepseek-chat；deepseek-reasoner 的 max_tokens 含思考过程，轻量档容易被截断。</p>
+  <p class="hint">三档建议都用 deepseek-chat；deepseek-reasoner 的 max_tokens 含思考过程，轻量档容易被截断。模型下拉来自服务商的「拉取模型列表」。</p>
   <form method="post" action="/settings/models" class="stack">
     <div class="tiers">
     {{range .Levels}}
@@ -40,10 +40,16 @@
       {{$lv := .}}
       <div class="tier">
         <label class="field">服务商
-          <select name="{{.Level}}_provider" data-level="{{.Level}}"><option value="">未配置</option>{{range $.Providers}}<option value="{{.ID}}" {{if eq .ID $lv.ProviderID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+          <select name="{{.Level}}_provider" data-level="{{.Level}}"><option value="" data-models="">未配置</option>{{range $.Providers}}<option value="{{.ID}}" data-models="{{join .Models "\n"}}" {{if eq .ID $lv.ProviderID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
         </label>
-        <label class="field">模型<input name="{{.Level}}_model" value="{{.Model}}" list="models-{{.Level}}"><datalist id="models-{{.Level}}"></datalist></label>
+        <label class="field">模型
+          <select name="{{.Level}}_model" data-model-for="{{.Level}}"><option value="">{{if .Options}}请选择{{else}}没有可选模型{{end}}</option>{{range .Options}}<option value="{{.}}" {{if eq . $lv.Model}}selected{{end}}>{{.}}</option>{{end}}</select>
+        </label>
       </div>
+      <details class="manual" data-manual-box="{{.Level}}" {{if not .Options}}open{{end}}>
+        <summary>手动输入</summary>
+        <label class="field">模型名 <small>列表里没有时填这里；填了就以这里为准</small><input name="{{.Level}}_model_manual" data-manual-for="{{.Level}}" autocomplete="off" spellcheck="false"></label>
+      </details>
     </fieldset>
     {{end}}
     </div>

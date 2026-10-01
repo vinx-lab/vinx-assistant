@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +67,7 @@ func applyGeneral(st *model.Settings, f generalForm) error {
 
 type providerView struct {
 	ID, Name, BaseURL, KeyTail string
+	Models                     []string // 上次拉取到的模型 ID，供三档下拉使用
 }
 
 type settingsData struct {
@@ -81,20 +83,30 @@ type levelView struct {
 	Name       string
 	ProviderID string
 	Model      string
+	Options    []string // 模型下拉的选项：所选服务商已保存的模型，当前值不在其中时也列上
+}
+
+// modelOptions 是某档模型下拉的选项：服务商已保存的模型；当前值不在列表里时放在最前面，保证能原样显示和保存。
+func modelOptions(models []string, cur string) []string {
+	if cur == "" || slices.Contains(models, cur) {
+		return models
+	}
+	return append([]string{cur}, models...)
 }
 
 func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status int, st model.Settings, g generalForm, errMsg string) {
 	d := settingsData{Page: s.page(r, "设置", "settings"), General: g, AI: st.AI}
 	d.Error = errMsg
 	for _, p := range st.AI.Providers {
-		d.Providers = append(d.Providers, providerView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, KeyTail: redact.Secret(p.APIKey)})
+		d.Providers = append(d.Providers, providerView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, KeyTail: redact.Secret(p.APIKey), Models: p.Models})
 	}
 	for _, l := range []struct {
 		lv   model.Level
 		name string
 	}{{model.LevelLight, "轻量"}, {model.LevelMedium, "中等"}, {model.LevelDeep, "深度"}} {
 		ref := st.AI.Ref(l.lv)
-		d.Levels = append(d.Levels, levelView{Level: l.lv, Name: l.name, ProviderID: ref.ProviderID, Model: ref.Model})
+		p, _ := st.AI.Provider(ref.ProviderID)
+		d.Levels = append(d.Levels, levelView{Level: l.lv, Name: l.name, ProviderID: ref.ProviderID, Model: ref.Model, Options: modelOptions(p.Models, ref.Model)})
 	}
 	d.AI.Providers = nil // 模板里只用 Providers（已打码），不把密钥放进模板数据
 	s.render(w, status, "settings", d)
@@ -138,6 +150,10 @@ func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
 	refs := map[model.Level]*model.ModelRef{model.LevelLight: &st.AI.Light, model.LevelMedium: &st.AI.Medium, model.LevelDeep: &st.AI.Deep}
 	for lv, ref := range refs {
 		pid, m := r.FormValue(string(lv)+"_provider"), strings.TrimSpace(r.FormValue(string(lv)+"_model"))
+		// 「手动输入」填了就以它为准（模型列表为空或想用列表外的模型时）
+		if manual := strings.TrimSpace(r.FormValue(string(lv) + "_model_manual")); manual != "" {
+			m = manual
+		}
 		if pid != "" {
 			if _, ok := st.AI.Provider(pid); !ok {
 				s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "选择的服务商不存在")
@@ -189,6 +205,9 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 					s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "API 地址变了，请重新填写密钥")
 					return
 				}
+				if base != p.BaseURL {
+					p.Models = nil // 模型列表属于旧地址
+				}
 				p.Name, p.BaseURL = name, base
 				if key != "" {
 					p.APIKey = key
@@ -235,7 +254,7 @@ func (s *Server) providerDelete(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/settings?msg=deleted")
 }
 
-// providerModels 拉取服务商的模型列表（POST：会带着密钥访问外部服务）。错误信息里的密钥打码。
+// providerModels 拉取服务商的模型列表（POST：会带着密钥访问外部服务）并保存到服务商上，供三档下拉使用。错误信息里的密钥打码。
 func (s *Server) providerModels(w http.ResponseWriter, r *http.Request) {
 	st, err := s.d.Store.LoadSettings(r.Context())
 	if err != nil {
@@ -262,5 +281,24 @@ func (s *Server) providerModels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": msg})
 		return
 	}
+	// 拉取最多 20 秒，期间设置可能被改过：重新读一次再写，只更新这一个服务商；它被删了或换了地址就不存
+	if err := s.saveProviderModels(r.Context(), p, models); err != nil {
+		s.fail(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
+}
+
+func (s *Server) saveProviderModels(ctx context.Context, fetched model.Provider, models []string) error {
+	st, err := s.d.Store.LoadSettings(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range st.AI.Providers {
+		if p := &st.AI.Providers[i]; p.ID == fetched.ID && p.BaseURL == fetched.BaseURL {
+			p.Models = slices.Clone(models)
+			return s.d.Store.SaveSettings(ctx, st)
+		}
+	}
+	return nil
 }

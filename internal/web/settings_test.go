@@ -138,3 +138,49 @@ func TestSettingsShowsModelAdvice(t *testing.T) {
 	_, body := e.get(t, "/settings")
 	mustContain(t, body, "三档建议都用 deepseek-chat", "deepseek-reasoner 的 max_tokens 含思考过程")
 }
+
+// 拉取模型列表后保存到服务商上；设置页三档渲染成下拉，当前值选中，不在列表里的当前值也列出；拿不到列表时手动输入照样能存。
+func TestSettingsModelDropdown(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.post(t, "/settings/providers", url.Values{"name": {"主力"}, "base_url": {"https://api.example.com"}, "api_key": {secretKey}})
+	st, _ := e.st.LoadSettings(ctx)
+	pid := st.AI.Providers[0].ID
+
+	// 还没拉取：模型下拉为空，手动输入展开
+	_, body := e.get(t, "/settings")
+	mustContain(t, body, `<select name="light_model" data-model-for="light"><option value="">没有可选模型</option></select>`, `<details class="manual" data-manual-box="light" open>`, `name="light_model_manual"`)
+
+	// 手动输入照样能存（且优先于下拉）
+	if resp, _ := e.post(t, "/settings/models", url.Values{"light_provider": {pid}, "light_model": {""}, "light_model_manual": {" custom-x "}}); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("manual save %d", resp.StatusCode)
+	}
+	if st, _ = e.st.LoadSettings(ctx); st.AI.Light.Model != "custom-x" {
+		t.Fatalf("manual model %+v", st.AI.Light)
+	}
+
+	// 拉取后保存在服务商上
+	if resp, _ := e.post(t, "/settings/providers/"+pid+"/models", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("fetch %d", resp.StatusCode)
+	}
+	st, _ = e.st.LoadSettings(ctx)
+	if got := st.AI.Providers[0].Models; len(got) != 2 || got[0] != "m-small" || got[1] != "m-large" {
+		t.Fatalf("models not persisted: %v", got)
+	}
+	e.post(t, "/settings/models", url.Values{"light_provider": {pid}, "light_model": {"m-large"}, "medium_provider": {pid}, "medium_model": {"custom-y"}})
+	_, body = e.get(t, "/settings")
+	mustContain(t, body,
+		`<option value="m-small" >m-small</option><option value="m-large" selected>m-large</option>`,   // 轻量：列表里的当前值被选中
+		`<option value="custom-y" selected>custom-y</option><option value="m-small" >m-small</option>`, // 中等：列表外的当前值也列出
+		"data-models=\"m-small\nm-large\"", "已保存 2 个模型")
+	mustNotContain(t, body, secretKey)
+	if st, _ = e.st.LoadSettings(ctx); st.AI.Light.Model != "m-large" || st.AI.Medium.Model != "custom-y" {
+		t.Fatalf("dropdown save %+v %+v", st.AI.Light, st.AI.Medium)
+	}
+
+	// 改了 API 地址：旧地址的模型列表作废
+	e.post(t, "/settings/providers", url.Values{"id": {pid}, "name": {"主力"}, "base_url": {"https://api2.example.com"}, "api_key": {"sk-new-key-0000"}})
+	if st, _ = e.st.LoadSettings(ctx); len(st.AI.Providers[0].Models) != 0 {
+		t.Fatalf("models kept after base change: %v", st.AI.Providers[0].Models)
+	}
+}

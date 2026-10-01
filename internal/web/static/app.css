@@ -257,6 +257,12 @@ legend { padding: 0 6px; font-weight: 650; font-size: 15px; }
 .tiers { display: flex; flex-direction: column; gap: 12px; }
 .tier { display: grid; gap: 10px; }
 @media (min-width: 600px) { .tier { grid-template-columns: 1fr 1fr; } }
+.manual { margin-top: 8px; }
+.manual summary { cursor: pointer; display: inline-flex; align-items: center; min-height: 36px; font-size: 14px; color: var(--accent); }
+.manual[open] summary { margin-bottom: 6px; }
+.manual summary::before, .add-provider summary::before { content: "+"; display: inline-block; width: 1.2em; font-weight: 700; }
+.manual[open] summary::before, .add-provider[open] summary::before { content: "−"; }
+.manual summary::-webkit-details-marker, .add-provider summary::-webkit-details-marker { display: none; }
 .add-provider summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; color: var(--accent); }
 
 /* ---------- 微信登录 ---------- */

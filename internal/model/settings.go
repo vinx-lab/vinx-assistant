@@ -28,6 +28,8 @@ type Provider struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
+	// Models 是上次「拉取模型列表」得到的模型 ID，设置页三档的模型下拉从这里取；改了 API 地址时清空。
+	Models []string `json:"models,omitempty"`
 }
 
 type ModelRef struct {
