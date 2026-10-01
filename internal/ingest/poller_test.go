@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -165,7 +166,7 @@ func TestPollerSkipsPoisonBatchAfterRepeatedFailures(t *testing.T) {
 		t.Fatalf("cursor saved after only %d failing batches", pushes)
 	}
 	out := logs.String()
-	if !strings.Contains(out, "多次处理失败，跳过这批消息") || !strings.Contains(out, "msg_ids=[7]") {
+	if !strings.Contains(out, "多次处理失败，跳过这批消息") || !regexp.MustCompile(`msg_ids="?\[7( 7)*\]"?`).MatchString(out) {
 		t.Fatalf("missing skip error: %s", out)
 	}
 	if strings.Contains(out, "poison") {

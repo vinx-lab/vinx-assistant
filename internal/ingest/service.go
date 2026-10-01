@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
+	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/notify"
@@ -180,7 +180,7 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 		CreatedAt:  created.In(clock.Zone),
 		MsgID:      id,
 		RawText:    p.Text,
-		URL:        extractURL(p.Text),
+		URL:        enrich.ExtractURL(p.Text),
 		Category:   p.Category,
 		CategoryBy: p.CategoryBy,
 		Level:      p.Level,
@@ -391,11 +391,4 @@ func (s *Service) Reply(ctx context.Context, text string) {
 			s.Log.Error("更新补发状态失败", "err", cerr)
 		}
 	}
-}
-
-// extractURL 是占位实现，Task 7 换成 enrich.ExtractURL。
-var urlRe = regexp.MustCompile(`https?://[^\s<>"'，。！？、；：（）【】《》「」]+`)
-
-func extractURL(text string) string {
-	return strings.TrimRight(urlRe.FindString(text), ".,;:!?)]}'\"")
 }
