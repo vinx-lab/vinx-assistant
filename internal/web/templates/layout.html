@@ -35,7 +35,7 @@
     </div>
   </div>
 </header>
-{{if .NoPassword}}<div class="container"><p class="nopw" role="note">{{template "i" "lock"}}<span>还没设密码，能访问到这个网址的人都能查看和修改全部内容。<a href="{{base}}/settings/password">设置密码</a></span></p></div>{{end}}
+{{if .NotRequired}}<div class="container"><p class="nopw" role="note">{{template "i" "lock"}}<span>还没开启登录，能访问到这个网址的人都能查看和修改全部内容。<a href="{{base}}/settings/password">开启登录</a></span></p></div>{{end}}
 <div class="container shell">
 <aside class="side" aria-label="二级菜单">{{block "side" .}}{{if .Sub}}{{template "setnav" .}}{{end}}{{end}}</aside>
 <main id="main">

@@ -100,31 +100,49 @@
 {{end}}
 
 {{else if eq .Section "password"}}
+<section class="card stack">
+  <div class="provider-head"><h2>需要登录</h2><span class="chip {{if .LoginRequired}}ok{{else}}warn{{end}}">{{if .LoginRequired}}已开启{{else}}未开启{{end}}</span></div>
+  {{if .LoginRequired}}
+  <p class="hint">打开网页要先登录，登录保持 30 天。登录页优先用微信验证码：页面上显示 6 位数字，在微信里发给 Bot 即可{{if .HasPassword}}；也可以用密码{{end}}。</p>
+  <form method="post" action="{{base}}/settings/login" class="form-foot start">
+    <input type="hidden" name="on" value="0">
+    <button type="submit" class="btn danger" data-confirm="关闭后，能访问到这个网址的人都能查看和修改全部内容。确定关闭？">关闭登录要求</button>
+  </form>
+  {{else}}
+  <p class="hint">开启后打开网页要先登录。可用的登录方式：微信验证码（{{if .WeChatBound}}已绑定微信{{else}}还没绑定微信，见 <a href="{{base}}/login">微信登录</a>{{end}}）、密码（{{if .HasPassword}}已设置{{else}}未设置{{end}}）。至少要有一种才能开启；开启时当前浏览器保持登录。</p>
+  <form method="post" action="{{base}}/settings/login" class="form-foot start">
+    <input type="hidden" name="on" value="1">
+    <button type="submit" class="btn primary">开启登录</button>
+  </form>
+  {{end}}
+</section>
 {{if .HasPassword}}
 <form method="post" action="{{base}}/settings/password" class="card stack">
   <h2>修改密码</h2>
-  <p class="hint">改完后其他设备的登录全部失效，当前设备保持登录。忘记密码时在服务器上运行 <code>vinx-assistant password</code> 重置。</p>
+  <p class="hint">密码是备用的登录方式。改完后其他设备的登录全部失效，当前设备保持登录。忘记密码时在服务器上运行 <code>vinx-assistant password</code> 重置。</p>
   <label>当前密码<input name="current" type="password" autocomplete="current-password" required></label>
   <div class="grid2">
-    <label>新密码 <small>至少 8 位</small><input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
-    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>新密码<input name="new" type="password" autocomplete="new-password" required></label>
+    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" required></label>
   </div>
   <div class="form-foot"><button type="submit" class="btn primary">修改密码</button></div>
-</form>
-<form method="post" action="{{base}}/settings/password/signout-all" class="card stack">
-  <h2>退出所有设备</h2>
-  <p class="hint">所有浏览器（包括这一个）的登录都会失效，需要重新输入密码。</p>
-  <div class="form-foot start"><button type="submit" class="btn danger" data-confirm="退出所有设备的登录，包括当前这个？">退出所有设备</button></div>
 </form>
 {{else}}
 <form method="post" action="{{base}}/settings/password" class="card stack">
   <h2>设置密码</h2>
-  <p class="hint">设置后打开网页要先输入密码，登录保持 30 天。当前浏览器设置后直接处于登录状态。</p>
+  <p class="hint">密码是备用的登录方式：微信不可用时也能登录。不限长度和字符，不为空即可。</p>
   <div class="grid2">
-    <label>新密码 <small>至少 8 位</small><input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
-    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>新密码<input name="new" type="password" autocomplete="new-password" required></label>
+    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" required></label>
   </div>
   <div class="form-foot"><button type="submit" class="btn primary">设置密码</button></div>
+</form>
+{{end}}
+{{if .LoginRequired}}
+<form method="post" action="{{base}}/settings/password/signout-all" class="card stack">
+  <h2>退出所有设备</h2>
+  <p class="hint">所有浏览器（包括这一个）的登录都会失效，需要重新登录。</p>
+  <div class="form-foot start"><button type="submit" class="btn danger" data-confirm="退出所有设备的登录，包括当前这个？">退出所有设备</button></div>
 </form>
 {{end}}
 

@@ -96,7 +96,7 @@ var settingGroups = []settingGroup{
 	}},
 	{"账号与数据", []settingSection{
 		{"login", "微信登录", "/login", "wechat"},
-		{"password", "密码", "/settings/password", "lock"},
+		{"password", "登录与密码", "/settings/password", "lock"},
 		{"usage", "用量", "/usage", "chart"},
 	}},
 }
@@ -114,7 +114,7 @@ func sectionHref(key string) string {
 }
 
 // settingsPageSections 是由 settings 模板渲染的小节（不含独立页面 login、usage）。
-var settingsPageSections = map[string]string{"providers": "服务商", "models": "模型", "rules": "时间与额度", "keywords": "关键词", "prompt": "提示词", "password": "密码"}
+var settingsPageSections = map[string]string{"providers": "服务商", "models": "模型", "rules": "时间与额度", "keywords": "关键词", "prompt": "提示词", "password": "登录与密码"}
 
 // settingsIndex 是手机上设置首页分组列表右侧显示的当前值，键是小节 Key。
 type settingsIndex map[string]string
@@ -138,8 +138,9 @@ type settingsData struct {
 	LabelRules    string
 	Prompt        string
 	PromptPreview string
-	// HasPassword 表示已设网页密码（密码小节显示「修改密码」而不是「设置密码」）。
-	HasPassword bool
+	// HasPassword 表示已设网页密码（显示「修改密码」而不是「设置密码」）；LoginRequired 是「需要登录」开关；
+	// WeChatBound 表示已绑定微信（暂停中也算），可以用验证码登录。
+	HasPassword, LoginRequired, WeChatBound bool
 }
 
 type levelView struct {
@@ -165,11 +166,12 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status i
 	if isIndex {
 		pg.Up = ""
 	}
-	d := settingsData{Page: pg, Section: section, IsIndex: isIndex, General: g, AI: st.AI, HasPassword: authFrom(r.Context()).Enabled}
+	d := settingsData{Page: pg, Section: section, IsIndex: isIndex, General: g, AI: st.AI, HasPassword: authFrom(r.Context()).HasPassword,
+		LoginRequired: authFrom(r.Context()).Required, WeChatBound: pg.Top.WeChat != "" && pg.Top.WeChat != "no_cred"}
 	d.Error = errMsg
 	if isIndex {
 		d.Index = s.settingsIndexOf(r.Context(), st, pg.Top.WeChat)
-		d.Index["password"] = passwordIndex(authFrom(r.Context()))
+		d.Index["password"] = loginIndex(authFrom(r.Context()))
 	}
 	for _, p := range st.AI.Providers {
 		d.Providers = append(d.Providers, providerView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, KeyTail: redact.Secret(p.APIKey), Models: p.Models})

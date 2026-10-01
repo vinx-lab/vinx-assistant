@@ -21,7 +21,7 @@ import (
 
 const testPW = "open sesame 123"
 
-// setPassword 模拟命令行设置密码：直接写库，吊销全部会话。返回记录里的哈希（base64），用来检查它没出现在页面和日志里。
+// setPassword 模拟命令行设置密码并打开「需要登录」（相当于 0003 升级上来的部署）：直接写库，吊销全部会话。返回记录里的哈希（base64），用来检查它没出现在页面和日志里。
 func (e *env) setPassword(t *testing.T, pw string) string {
 	t.Helper()
 	rec, err := auth.Hash(pw, 1000)
@@ -30,6 +30,9 @@ func (e *env) setPassword(t *testing.T, pw string) string {
 	}
 	raw, _ := rec.Encode()
 	if err := e.st.SetPassword(t.Context(), raw, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SetLoginRequired(t.Context(), true); err != nil {
 		t.Fatal(err)
 	}
 	return base64.StdEncoding.EncodeToString(rec.Hash)
@@ -92,14 +95,14 @@ func TestNoPasswordHint(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("%s: %d", p, code)
 		}
-		mustContain(t, body, "还没设密码", `href="/settings/password"`)
+		mustContain(t, body, "还没开启登录", `href="/settings/password"`)
 		mustNotContain(t, body, `action="/signout"`)
 	}
 	_, body := e.get(t, "/settings/password")
 	mustContain(t, body, "<h2>设置密码</h2>", `name="confirm"`)
 	mustNotContain(t, body, `name="current"`, "退出所有设备")
 	_, body = e.get(t, "/settings")
-	mustContain(t, body, `href="/settings/password"`, "未设置")
+	mustContain(t, body, `href="/settings/password"`, "未开启")
 	// 没设密码时登录页直接回去
 	if resp, _ := e.do(t, "GET", "/signin?next=/search", nil, nil); resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/search" {
 		t.Fatalf("signin: %d %s", resp.StatusCode, resp.Header.Get("Location"))
@@ -154,7 +157,7 @@ func TestGuardWhenPasswordSet(t *testing.T) {
 	// 登录页不泄露顶栏状态
 	_, body := e.get(t, "/signin?next=/settings")
 	mustContain(t, body, `name="next" value="/settings"`, `action="/signin"`, `type="password"`)
-	mustNotContain(t, body, "微信", "立即整理", "还没设密码")
+	mustNotContain(t, body, `class="dot`, "立即整理", "还没开启登录")
 }
 
 func TestSigninFlow(t *testing.T) {
@@ -184,12 +187,12 @@ func TestSigninFlow(t *testing.T) {
 		t.Fatalf("登录后 / = %d", resp.StatusCode)
 	}
 	mustContain(t, body, `action="/signout"`)
-	mustNotContain(t, body, "还没设密码", hash, testPW)
+	mustNotContain(t, body, "还没开启登录", hash, testPW)
 	_, body = e.do(t, "GET", "/settings/password", nil, c)
 	mustContain(t, body, "<h2>修改密码</h2>", `name="current"`, "退出所有设备")
 	mustNotContain(t, body, hash)
 	_, body = e.do(t, "GET", "/settings", nil, c)
-	mustContain(t, body, `class="m-signout"`, "已设置")
+	mustContain(t, body, `class="m-signout"`, "需要登录")
 	if code := e.code(t, "/login/status", c); code != http.StatusOK {
 		t.Fatalf("/login/status = %d", code)
 	}
@@ -243,7 +246,7 @@ func TestFirstSetPassword(t *testing.T) {
 		code              int
 		want              string
 	}{
-		{"太短", "1234567", "1234567", 400, "至少 8 位"},
+		{"空", "", "", 400, "不能为空"},
 		{"不一致", testPW, testPW + "x", 400, "不一致"},
 	}
 	for _, c := range cases {
@@ -270,8 +273,9 @@ func TestFirstSetPassword(t *testing.T) {
 	} else {
 		mustContain(t, body, "密码已设置")
 	}
-	if code := e.code(t, "/", nil); code != http.StatusSeeOther {
-		t.Fatalf("别的浏览器应要求登录：%d", code)
+	// 0004 起设密码不再自动要求登录
+	if code := e.code(t, "/", nil); code != http.StatusOK {
+		t.Fatalf("没开启登录时别的浏览器照常访问：%d", code)
 	}
 }
 
@@ -288,7 +292,7 @@ func TestChangePasswordRevokesOthers(t *testing.T) {
 		want string
 	}{
 		{"当前密码错", url.Values{"current": {"nope nope"}, "new": {newPW}, "confirm": {newPW}}, 401, "当前密码不对"},
-		{"新密码太短", url.Values{"current": {testPW}, "new": {"short"}, "confirm": {"short"}}, 400, "至少 8 位"},
+		{"新密码为空", url.Values{"current": {testPW}, "new": {""}, "confirm": {""}}, 400, "不能为空"},
 		{"两次不一致", url.Values{"current": {testPW}, "new": {newPW}, "confirm": {newPW + "!"}}, 400, "不一致"},
 	}
 	for _, c := range cases {
@@ -391,15 +395,16 @@ func TestCLIChangesTakeEffect(t *testing.T) {
 	if e.code(t, "/", c) != http.StatusSeeOther {
 		t.Fatal("命令行重置后旧会话应失效")
 	}
-	// 命令行清除：恢复无密码
+	// 命令行清除（微信不可用时同时关闭「需要登录」）：恢复成不需要登录
 	if err := e.st.ClearPassword(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	e.st.SetLoginRequired(t.Context(), false)
 	code, body := e.get(t, "/")
 	if code != 200 {
 		t.Fatalf("清除后 / = %d", code)
 	}
-	mustContain(t, body, "还没设密码")
+	mustContain(t, body, "还没开启登录")
 }
 
 func TestBasePathSignin(t *testing.T) {
@@ -553,10 +558,9 @@ func TestFirstSetPasswordDoesNotOverwrite(t *testing.T) {
 	e.setPassword(t, testPW)          // 另一方（命令行或另一个浏览器）先设好了
 	<-e.web.kdfSem
 	r := <-done
-	if r.resp.StatusCode != http.StatusConflict || sessionOf(r.resp) != nil {
-		t.Fatalf("应拒绝覆盖：%d", r.resp.StatusCode)
+	if r.resp.StatusCode != http.StatusSeeOther || r.resp.Header.Get("Location") != "/settings/password?msg=pwexists" || sessionOf(r.resp) != nil {
+		t.Fatalf("应拒绝覆盖：%d %s", r.resp.StatusCode, r.resp.Header.Get("Location"))
 	}
-	mustContain(t, r.body, "已设置过密码", `action="/signin"`)
 	raw, _ := e.st.PasswordRecord(t.Context())
 	if rec, _ := auth.Decode(raw); !rec.Verify(testPW) {
 		t.Fatal("先设的密码被覆盖了")

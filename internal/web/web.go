@@ -87,6 +87,7 @@ type Server struct {
 	lastRecord string                          // 上次读到的密码记录，变了就清空失败计数
 	kdfSem     chan struct{}                   // PBKDF2 串行化，见 serialKDF
 	verify     func(*auth.Record, string) bool // 校验密码；测试里换成计数的版本
+	codes      *codeThrottle                   // 生成微信登录验证码的节流
 }
 
 var pageNames = []string{"board", "item", "login", "search", "settings", "usage"}
@@ -105,7 +106,7 @@ func New(d Deps) *Server {
 	}
 	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts),
 		limiter: auth.NewLimiter(d.Clock), iter: auth.DefaultIterations, kdfSem: make(chan struct{}, 1),
-		verify: func(rec *auth.Record, pw string) bool { return rec.Verify(pw) }}
+		verify: func(rec *auth.Record, pw string) bool { return rec.Verify(pw) }, codes: &codeThrottle{clk: d.Clock}}
 	for _, name := range pageNames {
 		s.pages[name] = template.Must(template.New(name).Funcs(s.funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html"))
@@ -153,6 +154,8 @@ func (s *Server) Routes(root *http.ServeMux) {
 	mux.Handle("GET /signin", s.secure(http.HandlerFunc(s.signinPage)))
 	mux.Handle("POST /signin", s.secure(cop.Handler(http.HandlerFunc(s.signinPost))))
 	mux.Handle("POST /signout", s.secure(cop.Handler(http.HandlerFunc(s.signout))))
+	mux.Handle("GET /signin/code/status", s.secure(http.HandlerFunc(s.codeStatus)))
+	mux.Handle("POST /signin/code", s.secure(cop.Handler(http.HandlerFunc(s.codePost))))
 
 	get("/{$}", s.board)
 	post("/batch/run", s.batchRun)
@@ -172,6 +175,7 @@ func (s *Server) Routes(root *http.ServeMux) {
 	postAPI("/settings/providers/{id}/models", s.providerModels)
 	post("/settings/password", s.passwordSave)
 	post("/settings/password/signout-all", s.signoutAll)
+	post("/settings/login", s.loginRequiredSave)
 	get("/login", s.loginPage)
 	post("/login/start", s.loginStart)
 	post("/login/verify", s.loginVerify)
@@ -205,8 +209,8 @@ type Page struct {
 	Error string // 校验错误
 	Top   TopStatus
 
-	NoPassword bool // 还没设网页密码：顶栏下方提示
-	SignedIn   bool // 设了密码且已登录：显示「退出」
+	NotRequired bool // 「需要登录」没打开：顶栏下方提示
+	SignedIn    bool // 需要登录且已登录：显示「退出」
 }
 
 // TopStatus 是顶栏右侧的状态：微信连接、下次整理、立即整理。
@@ -253,13 +257,16 @@ var messages = map[string]string{
 	"deepnow":   "已标记为深入研究，并开始整理。",
 	"status":    "状态已更新。",
 	"deleted":   "已删除。",
-	"pwset":     "密码已设置，当前浏览器已登录。",
+	"pwset":     "密码已设置。",
+	"pwexists":  "已经有人设置过密码，没有覆盖。请用当前密码修改。",
+	"loginon":   "已开启登录，当前浏览器保持登录。",
+	"loginoff":  "已关闭登录要求。",
 	"pwchanged": "密码已修改，其他设备的登录已全部失效。",
 }
 
 func (s *Server) page(r *http.Request, title, nav string) Page {
 	a := authFrom(r.Context())
-	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")], Top: s.topStatus(r), NoPassword: !a.Enabled, SignedIn: a.SignedIn}
+	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")], Top: s.topStatus(r), NotRequired: !a.Required, SignedIn: a.Required && a.SignedIn}
 }
 
 // subPage 是挂在设置小节导航下的页面（微信登录、用量）。

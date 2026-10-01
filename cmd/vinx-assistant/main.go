@@ -30,7 +30,8 @@ const usageText = `用法：vinx-assistant <子命令> [参数]
   batch    立即跑一次 AI 整理（服务运行中也可以，两边不会重复整理）
   backup   导出数据库快照和附件（服务运行中也可以）
   password 设置或重置网页密码（服务运行中也可以）；所有登录随之失效
-             --stdin 从标准输入读一行作为新密码，--clear 清除密码
+             --stdin 从标准输入读一行作为新密码，--clear 清除密码，
+             --no-login 只关闭「需要登录」
   version  显示版本
 
 通用参数：--data 数据目录（VINX_DATA），serve 另有 --listen（VINX_LISTEN）

@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -27,8 +29,7 @@ const (
 	// maxIterations 防止库里被改成离谱的值，一次校验就把 CPU 占满。
 	maxIterations = 10_000_000
 
-	// MinLen、MaxLen 是密码长度（按字符计）的上下限。
-	MinLen = 8
+	// MaxLen 是密码长度（按字符计）的上限，只为防止超长输入；下限只要求不为空（spec 0004）。
 	MaxLen = 256
 )
 
@@ -44,8 +45,8 @@ type Record struct {
 func CheckNew(pw string) error {
 	n := utf8.RuneCountInString(pw)
 	switch {
-	case n < MinLen:
-		return fmt.Errorf("密码至少 %d 位", MinLen)
+	case n == 0:
+		return errors.New("密码不能为空")
 	case n > MaxLen:
 		return fmt.Errorf("密码最多 %d 位", MaxLen)
 	}
@@ -114,4 +115,36 @@ func NewToken() (string, error) {
 func TokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+// CodeLen 是微信登录验证码的位数。
+const CodeLen = 6
+
+// NewCode 生成一个 6 位数字验证码（crypto/rand，均匀分布，可以有前导 0）。
+func NewCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+// CodeHash 是验证码在数据库里的样子。
+func CodeHash(code string) string { return TokenHash("login-code:" + code) }
+
+// ParseCode 识别微信里发来的验证码：去掉首尾空白后正好是 6 位数字，或者「登录 123456」（中间空白可有可无）。
+func ParseCode(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if rest, ok := strings.CutPrefix(t, "登录"); ok {
+		t = strings.TrimSpace(rest)
+	}
+	if len(t) != CodeLen {
+		return "", false
+	}
+	for i := 0; i < len(t); i++ {
+		if t[i] < '0' || t[i] > '9' {
+			return "", false
+		}
+	}
+	return t, true
 }

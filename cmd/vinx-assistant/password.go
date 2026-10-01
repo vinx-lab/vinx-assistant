@@ -16,14 +16,24 @@ import (
 
 	"github.com/vinx-lab/vinx-assistant/internal/app"
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
+	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
 )
 
-// cmdPassword 设置、重置或清除网页密码，同时让所有登录失效。服务运行中也可以执行：网页每个请求都现读数据库。
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// cmdPassword 设置、重置或清除网页密码，同时让所有登录失效；或者只关闭「需要登录」。
+// 服务运行中也可以执行：网页每个请求都现读数据库。
 //
-//	vinx-assistant password            交互输入两次新密码（终端上不回显）
-//	vinx-assistant password --stdin    从标准输入读一行作为新密码，不确认（脚本用）
-//	vinx-assistant password --clear    清除密码，恢复无密码状态
+//	vinx-assistant password             交互输入两次新密码（终端上不回显）
+//	vinx-assistant password --stdin     从标准输入读一行作为新密码，不确认（脚本用）
+//	vinx-assistant password --clear     清除密码；微信也不可用时同时关闭「需要登录」，免得把自己锁在外面
+//	vinx-assistant password --no-login  只关闭「需要登录」，不动密码和已有登录
 func cmdPassword(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// main 已接住 SIGINT、SIGTERM；输入时回显关着，挂断（SIGHUP）和 Ctrl-\（SIGQUIT）也要先恢复回显再退出
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGQUIT)
@@ -31,14 +41,15 @@ func cmdPassword(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	fs := flag.NewFlagSet("password", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fromStdin := fs.Bool("stdin", false, "从标准输入读一行作为新密码（不确认）")
-	clearPW := fs.Bool("clear", false, "清除密码，恢复成无密码状态")
+	clearPW := fs.Bool("clear", false, "清除密码（微信也不可用时同时关闭「需要登录」）")
+	noLogin := fs.Bool("no-login", false, "只关闭「需要登录」")
 	home, _ := os.UserHomeDir()
 	cfg, err := parseConfig(fs, args, os.Getenv, home, false)
 	if err != nil {
 		return 2
 	}
-	if *fromStdin && *clearPW {
-		fmt.Fprintln(stderr, "--stdin 和 --clear 不能同时使用")
+	if n := btoi(*fromStdin) + btoi(*clearPW) + btoi(*noLogin); n > 1 {
+		fmt.Fprintln(stderr, "--stdin、--clear、--no-login 只能用一个")
 		return 2
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
@@ -50,7 +61,7 @@ func cmdPassword(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	}
 
 	var pw string
-	if !*clearPW {
+	if !*clearPW && !*noLogin {
 		if pw, err = readNewPassword(ctx, stdin, stderr, *fromStdin); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -67,12 +78,35 @@ func cmdPassword(ctx context.Context, args []string, stdin io.Reader, stdout, st
 		return 1
 	}
 	defer st.Close()
+	if *noLogin {
+		if err := st.SetLoginRequired(ctx, false); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "已关闭「需要登录」，打开网页不再要求登录。")
+		return 0
+	}
 	if *clearPW {
 		if err := st.ClearPassword(ctx); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		fmt.Fprintln(stdout, "已清除网页密码，所有设备的登录已失效。")
+		// 微信不可用（未登录或暂停中）时登录页没有验证码，没了密码就进不去：同时关闭「需要登录」
+		if status := session.New(st, nil, nil).Status(ctx); status != session.StatusOK {
+			on, err := st.LoginRequired(ctx)
+			if err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			if on {
+				if err := st.SetLoginRequired(ctx, false); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+				fmt.Fprintln(stdout, "微信目前不可用，已同时关闭「需要登录」。")
+			}
+		}
 		return 0
 	}
 	rec, err := auth.Hash(pw, 0)

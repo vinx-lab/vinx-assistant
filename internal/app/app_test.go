@@ -30,6 +30,9 @@ func TestHealthzWithPassword(t *testing.T) {
 		if err := a.Store.SetPassword(context.Background(), raw, ""); err != nil {
 			t.Fatal(err)
 		}
+		if err := a.Store.SetLoginRequired(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
 		srv := httptest.NewServer(a.Mux)
 		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		for p, want := range map[string]int{"/healthz": 200, base + "/": http.StatusSeeOther, base + "/signin": 200, base + "/static/app.css": 200} {

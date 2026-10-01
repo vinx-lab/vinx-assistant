@@ -7,17 +7,50 @@
 <meta name="robots" content="noindex">
 <title>{{.Title}} · Vinx 助手</title>
 <link rel="stylesheet" href="{{base}}/static/app.css">
+<script src="{{base}}/static/app.js" defer></script>
 </head>
 <body class="signin-body">
 <main class="signin" id="main">
   <p class="brand"><span class="logo" aria-hidden="true">V</span>Vinx 助手</p>
-  <form method="post" action="{{base}}/signin" class="card">
-    <h1>输入密码</h1>
-    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-    <input type="hidden" name="next" value="{{.Next}}">
-    <label>密码<input name="password" type="password" autocomplete="current-password" required autofocus></label>
-    <button type="submit" class="btn primary">登录</button>
-  </form>
+  {{if .WeChat}}
+  <section class="card signin-code"{{if .Code}} data-signin-poll data-next="{{.Next}}"{{end}}>
+    <h1>微信验证码登录</h1>
+    {{if .Code}}
+    <p class="code" aria-label="验证码 {{.Code}}">{{.Code}}</p>
+    <p class="hint">在微信里把这串数字发给 Bot，2 分钟内有效。收到「✓ 已登录网页」后，这个页面会自动进入。</p>
+    {{end}}
+    <p class="code-msg" id="code-msg" role="status">{{.CodeMsg}}</p>
+    {{if .Code}}
+    <form method="post" action="{{base}}/signin/code">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <input type="hidden" name="code" value="{{.Code}}">
+      <button type="submit" class="btn">我已发送</button>
+    </form>
+    {{else}}
+    <a class="btn" href="{{base}}/signin?next={{.Next}}">换一个验证码</a>
+    {{end}}
+  </section>
+  {{end}}
+  {{if .HasPassword}}
+  <details class="card signin-pw"{{if or .PasswordOpen (not .WeChat)}} open{{end}}>
+    <summary>用密码登录</summary>
+    <form method="post" action="{{base}}/signin">
+      {{if .PasswordError}}<p class="error" role="alert">{{.PasswordError}}</p>{{end}}
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label>密码<input name="password" type="password" autocomplete="current-password" required{{if or .PasswordOpen (not .WeChat)}} autofocus{{end}}></label>
+      <button type="submit" class="btn primary">登录</button>
+    </form>
+  </details>
+  {{else if .PasswordError}}<p class="error" role="alert">{{.PasswordError}}</p>
+  {{end}}
+  {{if and (not .WeChat) (not .HasPassword)}}
+  <section class="card">
+    <h1>暂时无法登录</h1>
+    <p class="hint">微信没有连接（未登录或暂停中），也没有设置密码。请在服务器上运行 <code>vinx-assistant password</code> 设置密码，或者运行 <code>vinx-assistant password --no-login</code> 关闭登录要求。</p>
+  </section>
+  {{else if not .WeChat}}
+  <p class="hint signin-note">微信没有连接，暂时只能用密码登录。</p>
+  {{end}}
 </main>
 </body>
 </html>{{end}}

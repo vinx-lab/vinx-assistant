@@ -62,7 +62,7 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Disposition", mime.FormatMediaType(disp, map[string]string{"filename": name}))
 	h.Set("X-Content-Type-Options", "nosniff")
-	if !authFrom(r.Context()).Enabled { // 设了密码时 guard 已设 no-store
+	if !authFrom(r.Context()).Required { // 需要登录时 guard 已设 no-store
 		h.Set("Cache-Control", "private, max-age=86400")
 	}
 	http.ServeContent(w, r, path.Base(clean), fi.ModTime(), f)

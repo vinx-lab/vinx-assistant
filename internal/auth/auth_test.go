@@ -75,7 +75,7 @@ func TestDefaultIterations(t *testing.T) {
 }
 
 func TestCheckNew(t *testing.T) {
-	for pw, ok := range map[string]bool{"": false, "1234567": false, "12345678": true, "密码密码密码密码": true, "密码密码密码密": false, strings.Repeat("a", MaxLen): true, strings.Repeat("a", MaxLen+1): false} {
+	for pw, ok := range map[string]bool{"": false, "1": true, " ": true, "密": true, "12345678": true, strings.Repeat("a", MaxLen): true, strings.Repeat("a", MaxLen+1): false} {
 		if err := CheckNew(pw); (err == nil) != ok {
 			t.Errorf("CheckNew(%q) = %v", pw, err)
 		}
@@ -203,5 +203,34 @@ func TestLimiterReservation(t *testing.T) {
 	}
 	if lk, _ := fail(l); !lk {
 		t.Fatal("累计 10 次失败应锁定")
+	}
+}
+
+func TestCode(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		c, err := NewCode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := ParseCode(c); !ok {
+			t.Fatalf("生成的 %q 认不出", c)
+		}
+		seen[c] = true
+	}
+	if len(seen) < 190 {
+		t.Fatalf("重复太多：%d", len(seen))
+	}
+	if CodeHash("123456") == CodeHash("123457") || CodeHash("123456") == TokenHash("123456") || len(CodeHash("1")) != 64 {
+		t.Fatal("CodeHash")
+	}
+	for in, want := range map[string]string{
+		"123456": "123456", " 012345\n": "012345", "登录 123456": "123456", "登录123456": "123456", "登录\u3000654321 ": "654321",
+		"12345": "", "1234567": "", "12345a": "", "\uff11\uff12\uff13\uff14\uff15\uff16": "", "登陆 123456": "", "123456 登录": "", "请登录 123456": "", "": "",
+	} {
+		got, ok := ParseCode(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("ParseCode(%q) = %q %v", in, got, ok)
+		}
 	}
 }

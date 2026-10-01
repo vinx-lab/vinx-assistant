@@ -109,6 +109,27 @@
     if (open) { open.open = false; open.querySelector('summary').focus(); }
   });
 
+  // 6. 网页登录的微信验证码：每 2 秒查询一次，确认后跳回原来的地址；过期时提示换一个
+  var pollBox = document.querySelector('[data-signin-poll]');
+  if (pollBox) {
+    var msg = document.getElementById('code-msg');
+    var url = base + '/signin/code/status?next=' + encodeURIComponent(pollBox.getAttribute('data-next') || '/');
+    var codeTimer = setInterval(function () {
+      fetch(url, { cache: 'no-store', credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j.state === 'ok') { clearInterval(codeTimer); location.href = j.next || (base + '/'); }
+        else if (j.state === 'expired') {
+          clearInterval(codeTimer);
+          msg.textContent = '验证码已过期。';
+          var a = document.createElement('a');
+          a.href = base + '/signin?next=' + encodeURIComponent(pollBox.getAttribute('data-next') || '/');
+          a.textContent = '换一个验证码';
+          msg.appendChild(document.createTextNode(' '));
+          msg.appendChild(a);
+        }
+      }).catch(function () { /* 网络抖动：下次再查 */ });
+    }, 2000);
+  }
+
   // 3. 扫码登录：轮询状态
   var box = document.querySelector('[data-login-state]');
   if (!box) return;

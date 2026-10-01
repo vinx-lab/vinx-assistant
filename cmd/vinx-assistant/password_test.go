@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
+	"github.com/vinx-lab/vinx-assistant/internal/ilink"
+	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
 )
 
@@ -42,10 +44,11 @@ func TestPasswordCommand(t *testing.T) {
 		code  int
 		msg   string
 	}{
-		{"太短", "short\n", []string{"--stdin"}, 1, "至少 8 位"},
+		{"空行", "\n", []string{"--stdin"}, 1, "不能为空"},
 		{"空输入", "", []string{"--stdin"}, 1, "没有读到密码"},
 		{"两次不一致", "password-one\npassword-two\n", nil, 1, "不一致"},
-		{"参数冲突", "", []string{"--stdin", "--clear"}, 2, "不能同时使用"},
+		{"参数冲突", "", []string{"--stdin", "--clear"}, 2, "只能用一个"},
+		{"参数冲突 2", "", []string{"--clear", "--no-login"}, 2, "只能用一个"},
 	}
 	for _, c := range cases {
 		code, _, errOut := runPW(c.stdin, c.args...)
@@ -89,5 +92,72 @@ func TestPasswordCommand(t *testing.T) {
 	}
 	if v := record(); v != "" {
 		t.Fatalf("清除后 %q", v)
+	}
+}
+
+// --clear 在微信不可用时同时关闭「需要登录」；--no-login 只关开关；单个字符的密码可以设置。
+func TestPasswordLoginSwitch(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	runPW := func(stdin string, args ...string) (int, string) {
+		t.Helper()
+		var out, errb bytes.Buffer
+		code := cmdPassword(ctx, append([]string{"--data", dir}, args...), strings.NewReader(stdin), &out, &errb)
+		if code != 0 {
+			t.Fatalf("%v: %d %s", args, code, errb.String())
+		}
+		return code, out.String()
+	}
+	open := func() *store.Store {
+		st, err := store.Open(filepath.Join(dir, "vinx-assistant.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	required := func() bool {
+		st := open()
+		defer st.Close()
+		on, _ := st.LoginRequired(ctx)
+		return on
+	}
+	setRequired := func(on bool) {
+		st := open()
+		st.SetLoginRequired(ctx, on)
+		st.Close()
+	}
+
+	runPW("x\n", "--stdin")
+	st := open()
+	raw, _ := st.PasswordRecord(ctx)
+	st.Close()
+	if rec, _ := auth.Decode(raw); !rec.Verify("x") {
+		t.Fatal("单个字符的密码应能设置")
+	}
+
+	setRequired(true)
+	if _, out := runPW("", "--no-login"); !strings.Contains(out, "已关闭") || required() {
+		t.Fatalf("--no-login：%q", out)
+	}
+	st = open()
+	if v, _ := st.PasswordRecord(ctx); v == "" {
+		t.Fatal("--no-login 不应动密码")
+	}
+	st.Close()
+
+	// 没有微信凭证：--clear 同时关闭开关
+	setRequired(true)
+	if _, out := runPW("", "--clear"); !strings.Contains(out, "同时关闭") || required() {
+		t.Fatalf("--clear 无微信：%q", out)
+	}
+
+	// 微信可用：--clear 不动开关
+	st = open()
+	session.New(st, nil, nil).SaveCred(ctx, ilink.Cred{BotToken: "t", BotID: "b", UserID: "u", BaseURL: "http://127.0.0.1:1"})
+	st.SetLoginRequired(ctx, true)
+	st.Close()
+	runPW("y\n", "--stdin")
+	if _, out := runPW("", "--clear"); strings.Contains(out, "同时关闭") || !required() {
+		t.Fatalf("--clear 有微信：%q", out)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vinx-lab/vinx-assistant/internal/auth"
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
@@ -259,6 +260,9 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	}
 	s.noteDrift(ctx, m)
 	f := flatten(m)
+	if done, err := s.signinCode(ctx, id, f, now); done || err != nil {
+		return err
+	}
 	settings, err := s.Store.LoadSettings(ctx)
 	if err != nil {
 		return err
@@ -311,6 +315,33 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	err = s.Store.MarkSeen(ctx, id, now)
 	s.enqueue(job) // 条目和附件记录已落库；即使 MarkSeen 失败也照常后处理，重放时不会重复
 	return err
+}
+
+// SigninReply 是验证码确认后 Bot 的回复。
+const SigninReply = "✓ 已登录网页"
+
+// signinCode 处理网页登录验证码（spec 0004）：纯文字消息正好是 6 位数字或「登录 123456」，
+// 且和一个有效、未用过的验证码相同时，标记该验证码已确认、回复主人，这条消息不入库、不当指令、不交给 AI。
+// 对不上时返回 false，照常当普通消息处理。验证码由网页写进数据库，这里只读写数据库，不依赖网页进程。
+func (s *Service) signinCode(ctx context.Context, id string, f flat, now time.Time) (bool, error) {
+	if len(f.media) > 0 {
+		return false, nil
+	}
+	code, ok := auth.ParseCode(f.text)
+	if !ok {
+		return false, nil
+	}
+	matched, err := s.Store.ConfirmLoginCode(ctx, auth.CodeHash(code), now)
+	if err != nil || !matched {
+		return false, err
+	}
+	s.Log.Info("微信验证码已确认，网页可以登录", "msg_id", id)
+	// 先记已收再回复：重复投递时不会再次确认（验证码也只能确认一次），也不会被存成条目
+	if err := s.Store.MarkSeen(ctx, id, now); err != nil {
+		return true, err
+	}
+	s.Reply(ctx, SigninReply)
+	return true, nil
 }
 
 // SaveTextAsItem 按普通收件规则（前缀与关键词、标签、链接、回执）把一段文字存成条目。

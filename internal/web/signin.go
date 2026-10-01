@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
+	"github.com/vinx-lab/vinx-assistant/internal/session"
 )
 
-// 网页密码（spec 0003）：没设密码时一切照旧，只在顶栏下方提示；设了密码后除 /signin、/static/、/healthz 外都要登录。
-// 会话令牌放在 cookie 里，数据库只存它的 sha256；密码记录存在 settings 表的 auth 键。
-// 命令行 `vinx-assistant password` 直接改数据库，所以每个请求都现读密码记录和会话，不做进程内缓存。
+// 网页登录（spec 0003、0004）：「需要登录」开关关闭时一切照旧，只在顶栏下方提示；打开后除 /signin、/static/、/healthz 外都要登录。
+// 登录方式有微信验证码（signincode.go）和密码两种。会话令牌放在 cookie 里，数据库只存它的 sha256；
+// 密码记录存在 settings 表的 auth 键，开关是 login_required 键。
+// 命令行 `vinx-assistant password` 直接改数据库，所以每个请求都现读开关、密码记录和会话，不做进程内缓存。
 
 const (
 	sessionCookie = "vinx_session"
@@ -32,9 +34,10 @@ const (
 
 // authState 是当前请求的登录情况，由 guard 放进 context。
 type authState struct {
-	Enabled   bool   // 已设密码
-	SignedIn  bool   // 已设密码且带着有效会话
-	TokenHash string // 当前会话（SignedIn 时）
+	Required    bool   // 「需要登录」已打开
+	HasPassword bool   // 已设密码
+	SignedIn    bool   // 带着有效会话
+	TokenHash   string // 当前会话（SignedIn 时）
 }
 
 type authKey struct{}
@@ -69,11 +72,16 @@ func (s *Server) passwordRecord(ctx context.Context) (*auth.Record, error) {
 
 // authOf 查当前请求的登录情况。
 func (s *Server) authOf(r *http.Request) (authState, *auth.Record, error) {
-	rec, err := s.passwordRecord(r.Context())
-	if err != nil || rec == nil {
-		return authState{}, nil, err
+	var a authState
+	req, err := s.d.Store.LoginRequired(r.Context())
+	if err != nil {
+		return a, nil, err
 	}
-	a := authState{Enabled: true}
+	rec, err := s.passwordRecord(r.Context())
+	if err != nil {
+		return a, nil, err
+	}
+	a.Required, a.HasPassword = req, rec != nil
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 		h := auth.TokenHash(c.Value)
 		ok, err := s.d.Store.SessionValid(r.Context(), h, s.d.Clock.Now())
@@ -87,7 +95,12 @@ func (s *Server) authOf(r *http.Request) (authState, *auth.Record, error) {
 	return a, rec, nil
 }
 
-// guard 是登录检查，放在 Host 白名单和跨站防护之后。读不到密码记录时拒绝访问，不放行。
+// wechatReady 报告微信是否可用（已登录且没有暂停），可用时登录页才显示验证码。
+func (s *Server) wechatReady(ctx context.Context) bool {
+	return s.d.Session != nil && s.d.Session.Status(ctx) == session.StatusOK
+}
+
+// guard 是登录检查，放在 Host 白名单和跨站防护之后。读不到开关或密码记录时拒绝访问，不放行。
 func (s *Server) guard(kind guardKind, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, _, err := s.authOf(r)
@@ -95,7 +108,7 @@ func (s *Server) guard(kind guardKind, h http.HandlerFunc) http.Handler {
 			s.fail(w, err)
 			return
 		}
-		if a.Enabled && !a.SignedIn {
+		if a.Required && !a.SignedIn {
 			switch kind {
 			case guardAPI:
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录或登录已过期，请刷新页面"})
@@ -106,8 +119,8 @@ func (s *Server) guard(kind guardKind, h http.HandlerFunc) http.Handler {
 			}
 			return
 		}
-		if a.Enabled {
-			// 登录后的内容不进浏览器缓存：共用设备上退出后按返回键或打开附件地址看不到（没设密码时保持原样）
+		if a.Required {
+			// 登录后的内容不进浏览器缓存：共用设备上退出后按返回键或打开附件地址看不到（不需要登录时保持原样）
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), authKey{}, a)))
@@ -146,9 +159,9 @@ func (s *Server) cookiePath() string {
 	return s.d.BasePath
 }
 
-// sessionCookieFor 生成会话 cookie；token 为空时生成删除用的 cookie。
-func (s *Server) sessionCookieFor(r *http.Request, token string, expires time.Time) *http.Cookie {
-	c := &http.Cookie{Name: sessionCookie, Value: token, Path: s.cookiePath(), HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r)}
+// cookieFor 生成 name 的 cookie；token 为空时生成删除用的 cookie。
+func (s *Server) cookieFor(r *http.Request, name, token string, expires time.Time) *http.Cookie {
+	c := &http.Cookie{Name: name, Value: token, Path: s.cookiePath(), HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r)}
 	if token == "" {
 		c.MaxAge = -1
 	} else {
@@ -156,6 +169,11 @@ func (s *Server) sessionCookieFor(r *http.Request, token string, expires time.Ti
 		c.MaxAge = int(expires.Sub(s.d.Clock.Now()) / time.Second)
 	}
 	return c
+}
+
+// sessionCookieFor 生成会话 cookie；token 为空时生成删除用的 cookie。
+func (s *Server) sessionCookieFor(r *http.Request, token string, expires time.Time) *http.Cookie {
+	return s.cookieFor(r, sessionCookie, token, expires)
 }
 
 // startSession 为当前浏览器新建会话并写 cookie；返回令牌哈希。浏览器原来带着的会话一并吊销（防会话固定）。
@@ -185,7 +203,7 @@ func (s *Server) clearSession(w http.ResponseWriter, r *http.Request) {
 
 // lockedMsg 是锁定期间给用户看的提示。
 func lockedMsg(d time.Duration) string {
-	return "密码错误次数过多，已暂停登录，请 " + strconv.Itoa(auth.Minutes(d)) + " 分钟后再试。忘记密码可在服务器上运行 vinx-assistant password 重置。"
+	return "密码错误次数过多，已暂停密码登录，请 " + strconv.Itoa(auth.Minutes(d)) + " 分钟后再试。忘记密码可在服务器上运行 vinx-assistant password 重置。"
 }
 
 // serialKDF 让 PBKDF2（登录校验、改密码时的哈希）同一时刻最多跑一个，防止并发请求把 CPU 占满。
@@ -214,7 +232,7 @@ func (s *Server) checkPassword(ctx context.Context, rec *auth.Record, pw string,
 		return "请求已取消，请重试。", http.StatusServiceUnavailable
 	}
 	if s.limiter.Done(tk, ok) {
-		s.d.Log.Warn("密码错误次数过多，暂停登录", "fails", auth.MaxFails, "window", auth.FailWindow.String(), "lock", auth.LockFor.String())
+		s.d.Log.Warn("密码错误次数过多，暂停密码登录", "fails", auth.MaxFails, "window", auth.FailWindow.String(), "lock", auth.LockFor.String())
 		return lockedMsg(s.limiter.Locked()), http.StatusTooManyRequests
 	}
 	if ok {
@@ -223,13 +241,7 @@ func (s *Server) checkPassword(ctx context.Context, rec *auth.Record, pw string,
 	return what + "不对。", http.StatusUnauthorized
 }
 
-type signinData struct {
-	Title string
-	Next  string
-	Error string
-}
-
-// signinPage 是登录页。没设密码或已经登录时直接回到 next。
+// signinPage 是登录页。不需要登录或已经登录时直接回到 next。
 func (s *Server) signinPage(w http.ResponseWriter, r *http.Request) {
 	next := safeBack(r.URL.Query().Get("next"))
 	a, _, err := s.authOf(r)
@@ -237,17 +249,18 @@ func (s *Server) signinPage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if !a.Enabled || a.SignedIn {
+	if !a.Required || a.SignedIn {
 		s.redirect(w, r, next)
 		return
 	}
-	d := signinData{Title: "登录", Next: next}
-	if l := s.limiter.Locked(); l > 0 {
-		d.Error = lockedMsg(l)
+	d := signinData{Next: next}
+	if l := s.limiter.Locked(); l > 0 && a.HasPassword {
+		d.PasswordError, d.PasswordOpen = lockedMsg(l), true
 	}
-	s.render(w, http.StatusOK, "signin", d)
+	s.renderSignin(w, r, http.StatusOK, a, d)
 }
 
+// signinPost 是密码登录。
 func (s *Server) signinPost(w http.ResponseWriter, r *http.Request) {
 	next := safeBack(r.FormValue("next"))
 	a, rec, err := s.authOf(r)
@@ -255,12 +268,16 @@ func (s *Server) signinPost(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if !a.Enabled {
+	if !a.Required {
 		s.redirect(w, r, next)
 		return
 	}
+	if rec == nil {
+		s.renderSignin(w, r, http.StatusUnauthorized, a, signinData{Next: next, PasswordError: "还没有设置密码。", PasswordOpen: true})
+		return
+	}
 	if msg, code := s.checkPassword(r.Context(), rec, r.FormValue("password"), "密码"); msg != "" {
-		s.render(w, code, "signin", signinData{Title: "登录", Next: next, Error: msg})
+		s.renderSignin(w, r, code, a, signinData{Next: next, PasswordError: msg, PasswordOpen: true})
 		return
 	}
 	if _, err := s.startSession(w, r); err != nil {
@@ -289,26 +306,29 @@ func (s *Server) signoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearSession(w, r)
-	if !authFrom(r.Context()).Enabled {
+	if !authFrom(r.Context()).Required {
 		s.redirect(w, r, "/settings/password")
 		return
 	}
 	s.redirect(w, r, "/signin")
 }
 
+// settingsError 在「登录与密码」小节显示错误。
+func (s *Server) settingsError(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	st, err := s.d.Store.LoadSettings(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.renderSettings(w, r, code, "password", st, generalFormOf(st), msg)
+}
+
 // passwordSave 设置或修改密码。没设密码时只要两次新密码；已设时还要当前密码，改完吊销其他设备、保留当前设备。
 func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 	a := authFrom(r.Context())
-	bad := func(code int, msg string) {
-		st, err := s.d.Store.LoadSettings(r.Context())
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		s.renderSettings(w, r, code, "password", st, generalFormOf(st), msg)
-	}
+	bad := func(code int, msg string) { s.settingsError(w, r, code, msg) }
 	newPW, confirm := r.FormValue("new"), r.FormValue("confirm")
-	if a.Enabled {
+	if a.HasPassword {
 		rec, err := s.passwordRecord(r.Context())
 		if err != nil {
 			s.fail(w, err)
@@ -346,36 +366,64 @@ func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if a.Enabled {
+	msg := "pwchanged"
+	if a.HasPassword {
 		err = s.d.Store.SetPassword(r.Context(), raw, a.TokenHash)
 	} else {
 		// 首次设置用条件写入：处理期间别人（另一个浏览器或命令行）已经设好密码时不覆盖
 		var inserted bool
 		inserted, err = s.d.Store.SetPasswordIfUnset(r.Context(), raw)
 		if err == nil && !inserted {
-			s.render(w, http.StatusConflict, "signin", signinData{Title: "登录", Next: "/settings/password", Error: "已设置过密码，请登录。"})
+			s.redirect(w, r, "/settings/password?msg=pwexists") // 之后由 guard 决定还能不能看设置页
 			return
 		}
+		msg = "pwset"
 	}
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	msg := "pwchanged"
-	if !a.SignedIn { // 首次设置：当前浏览器直接登录
+	if !a.SignedIn { // 当前浏览器直接登录（之后打开「需要登录」也不用再登一次）
 		if _, err := s.startSession(w, r); err != nil {
 			s.fail(w, err)
 			return
 		}
-		msg = "pwset"
 	}
 	s.redirect(w, r, "/settings/password?msg="+msg)
 }
 
-// passwordIndex 是手机设置首页「密码」一项右侧的值。
-func passwordIndex(a authState) string {
-	if a.Enabled {
-		return "已设置"
+// loginRequiredSave 打开或关闭「需要登录」。打开要求微信已登录或已设密码，至少一种登录方式可用；打开时当前浏览器保持登录。
+func (s *Server) loginRequiredSave(w http.ResponseWriter, r *http.Request) {
+	a := authFrom(r.Context())
+	on := r.FormValue("on") == "1"
+	if on {
+		wx := s.d.Session != nil && s.d.Session.Status(r.Context()) != session.StatusNoCred
+		if !wx && !a.HasPassword {
+			s.settingsError(w, r, http.StatusBadRequest, "开启前需要至少一种登录方式：先在「微信登录」里绑定 ClawBot，或者在下面设置密码。")
+			return
+		}
+		if !a.SignedIn {
+			if _, err := s.startSession(w, r); err != nil {
+				s.fail(w, err)
+				return
+			}
+		}
 	}
-	return "未设置"
+	if err := s.d.Store.SetLoginRequired(r.Context(), on); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if on {
+		s.redirect(w, r, "/settings/password?msg=loginon")
+		return
+	}
+	s.redirect(w, r, "/settings/password?msg=loginoff")
+}
+
+// loginIndex 是手机设置首页「登录与密码」一项右侧的值。
+func loginIndex(a authState) string {
+	if a.Required {
+		return "需要登录"
+	}
+	return "未开启"
 }
