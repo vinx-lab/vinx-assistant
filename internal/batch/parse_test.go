@@ -188,3 +188,14 @@ func TestParseItemsFixedCategoryIgnoresAIValue(t *testing.T) {
 		t.Fatalf("res=%+v errs=%v err=%v", res, errs, err)
 	}
 }
+
+func TestApplyKeepsCategoryWhenStatusNotDefault(t *testing.T) {
+	it := &model.Item{Category: model.CatTodo, CategoryBy: model.ByAI, Status: model.StatusDone}
+	apply(it, Result{Category: model.CatResearch, Detail: "笔记"}, model.LevelMedium)
+	if it.Category != model.CatTodo || it.Status != model.StatusDone {
+		t.Fatalf("category/status changed on non-default status: %+v", it)
+	}
+	if it.Detail != "笔记" || it.ProcessedLevel != model.LevelMedium {
+		t.Fatalf("fields not applied: %+v", it)
+	}
+}

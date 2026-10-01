@@ -75,17 +75,42 @@ func TestLease(t *testing.T) {
 	st, fc := openTest(t)
 	ctx := context.Background()
 	now := fc.Now()
-	if ok, err := st.TryLease(ctx, "l", now, 30*time.Minute); !ok || err != nil {
+	if ok, err := st.TryLease(ctx, "l", "a", now, 10*time.Minute); !ok || err != nil {
 		t.Fatalf("first lease ok=%v err=%v", ok, err)
 	}
-	if ok, _ := st.TryLease(ctx, "l", now.Add(time.Minute), 30*time.Minute); ok {
+	if ok, _ := st.TryLease(ctx, "l", "b", now.Add(time.Minute), 10*time.Minute); ok {
 		t.Fatal("second lease must fail while held")
 	}
-	if ok, _ := st.TryLease(ctx, "l", now.Add(31*time.Minute), 30*time.Minute); !ok {
+	// 续期延长到期时间：原本 11 分钟时已过期，续期后 11 分钟时别人仍抢不到。
+	if ok, err := st.RenewLease(ctx, "l", "a", now.Add(5*time.Minute), 10*time.Minute); !ok || err != nil {
+		t.Fatalf("renew ok=%v err=%v", ok, err)
+	}
+	if ok, _ := st.TryLease(ctx, "l", "b", now.Add(11*time.Minute), 10*time.Minute); ok {
+		t.Fatal("renewed lease taken before new expiry")
+	}
+	// 别的持有者不能续期、不能释放。
+	if ok, _ := st.RenewLease(ctx, "l", "b", now.Add(6*time.Minute), 10*time.Minute); ok {
+		t.Fatal("other owner renewed")
+	}
+	if err := st.ReleaseLease(ctx, "l", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.TryLease(ctx, "l", "b", now.Add(12*time.Minute), 10*time.Minute); ok {
+		t.Fatal("other owner released the lease")
+	}
+	// 过期后可被接管，原持有者随后不能续期也不能释放新租约。
+	if ok, _ := st.TryLease(ctx, "l", "b", now.Add(16*time.Minute), 10*time.Minute); !ok {
 		t.Fatal("expired lease must be re-acquirable")
 	}
-	st.ReleaseLease(ctx, "l")
-	if ok, _ := st.TryLease(ctx, "l", now.Add(32*time.Minute), 30*time.Minute); !ok {
+	if ok, _ := st.RenewLease(ctx, "l", "a", now.Add(17*time.Minute), 10*time.Minute); ok {
+		t.Fatal("old owner renewed after takeover")
+	}
+	st.ReleaseLease(ctx, "l", "a")
+	if ok, _ := st.TryLease(ctx, "l", "c", now.Add(18*time.Minute), 10*time.Minute); ok {
+		t.Fatal("old owner released new owner's lease")
+	}
+	st.ReleaseLease(ctx, "l", "b")
+	if ok, _ := st.TryLease(ctx, "l", "c", now.Add(18*time.Minute), 10*time.Minute); !ok {
 		t.Fatal("released lease must be acquirable")
 	}
 }

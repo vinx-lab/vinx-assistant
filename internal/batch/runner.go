@@ -2,7 +2,9 @@ package batch
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,10 +34,13 @@ const (
 	maxImageBytes   = 5 << 20
 	maxPromptTags   = 100
 	leaseKey        = "batch.lease"
-	// leaseTTL 要比一次整理最长可能的耗时还长（每次调用最长 180 秒，条目多时可能持续很久），
-	// 否则另一个进程会在本次还没结束时抢到租约。进程崩溃时最多等这么久才能再次整理。
-	leaseTTL = 2 * time.Hour
+	// 整理期间每 leaseRenewEvery 续期一次，租约只需比几次心跳长；进程崩溃后最多等 leaseTTL 就能再整理。
+	leaseTTL        = 10 * time.Minute
+	leaseRenewEvery = 2 * time.Minute
 )
+
+// errLeaseLost 是心跳发现租约已被别的进程接管时取消整理的原因。
+var errLeaseLost = errors.New("整理租约被其他进程接管，本次整理中止")
 
 type Report struct {
 	Processed int
@@ -68,8 +73,9 @@ type Runner struct {
 	NewLLM   func(p model.Provider) llm.Chatter // 测试注入；nil 时用 llm.New
 	Log      *slog.Logger
 
-	mu      sync.Mutex
-	running atomic.Bool
+	mu         sync.Mutex
+	running    atomic.Bool
+	renewEvery time.Duration // 测试用；0 表示 leaseRenewEvery
 }
 
 func (r *Runner) Running() bool { return r.running.Load() }
@@ -103,15 +109,20 @@ func (r *Runner) Run(ctx context.Context) (Report, error) {
 	}
 	defer r.mu.Unlock()
 	now := r.now()
-	ok, err := r.Store.TryLease(ctx, leaseKey, now, leaseTTL)
+	owner := newOwner()
+	ok, err := r.Store.TryLease(ctx, leaseKey, owner, now, leaseTTL)
 	if err != nil {
 		return Report{}, err
 	}
 	if !ok {
 		return Report{Busy: true}, nil
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stopHeartbeat := r.heartbeat(ctx, owner, cancel)
 	defer func() {
-		if err := r.Store.ReleaseLease(context.WithoutCancel(ctx), leaseKey); err != nil {
+		stopHeartbeat() // 先停心跳，再释放，避免释放后又被续上
+		if err := r.Store.ReleaseLease(context.WithoutCancel(ctx), leaseKey, owner); err != nil {
 			r.log().Error("释放整理租约失败", "err", err)
 		}
 	}()
@@ -176,13 +187,57 @@ func (r *Runner) Run(ctx context.Context) (Report, error) {
 		}
 		ru.single(it, atts[it.ID])
 	}
-	if err := ctx.Err(); err != nil {
+	if ctx.Err() != nil {
+		err := context.Cause(ctx)
 		ru.rep.Notes = append(ru.rep.Notes, "整理被中途取消，没处理到的条目下次再整理")
-		r.log().Warn("AI 整理被取消", "report", ru.rep.String())
+		r.log().Warn("AI 整理被取消", "cause", err, "report", ru.rep.String())
 		return *ru.rep, err
 	}
 	r.log().Info("AI 整理结束", "report", ru.rep.String())
 	return *ru.rep, nil
+}
+
+func newOwner() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// heartbeat 定期续期租约；发现租约已不属于本次整理时取消整理。返回的函数停止心跳并等它退出。
+func (r *Runner) heartbeat(ctx context.Context, owner string, cancel context.CancelCauseFunc) (stop func()) {
+	every := r.renewEvery
+	if every <= 0 {
+		every = leaseRenewEvery
+	}
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+			}
+			ok, err := r.Store.RenewLease(hbCtx, leaseKey, owner, r.now(), leaseTTL)
+			switch {
+			case hbCtx.Err() != nil:
+				return
+			case err != nil:
+				r.log().Error("续期整理租约失败", "err", err)
+			case !ok:
+				r.log().Error("整理租约已被接管，中止本次整理")
+				cancel(errLeaseLost)
+				return
+			}
+		}
+	}()
+	return func() {
+		hbCancel()
+		<-done
+	}
 }
 
 type levelChatter struct {
@@ -312,6 +367,11 @@ func (ru *run) single(it *model.Item, atts []model.Attachment) {
 		return
 	}
 	images := ru.loadImages(atts)
+	if len(images) == 0 && strings.TrimSpace(it.RawText) == "" && it.URL == "" {
+		// 附件记录在，但图片文件读不到：没有可交给 AI 的内容。
+		ru.skip(it)
+		return
+	}
 	pitems := []promptItem{pi}
 	if !ru.fits(Estimate(ru.request(level, pitems, images, ""))) {
 		ru.rep.Queued++
@@ -331,9 +391,10 @@ func (ru *run) call(level model.Level, items []*model.Item, pitems []promptItem,
 	est := Estimate(req)
 	shares := map[int64]int64{}
 	var (
-		results map[int64]Result
-		errs    map[int64]error
-		lastErr error
+		results  map[int64]Result
+		errs     map[int64]error
+		lastErr  error
+		noBudget bool // 格式不对、但剩余预算不够重试
 	)
 	for attempt := 1; attempt <= 2; attempt++ {
 		resp, err := lc.ch.Chat(ru.ctx, req)
@@ -352,7 +413,11 @@ func (ru *run) call(level model.Level, items []*model.Item, pitems []promptItem,
 			break
 		}
 		ru.r.log().Warn("AI 返回的格式不对", "level", level, "attempt", attempt, "err", lastErr)
-		if attempt == 2 || ru.cancelled() || !ru.fits(est) {
+		if attempt == 2 || ru.cancelled() {
+			break
+		}
+		if !ru.fits(est) {
+			noBudget = true
 			break
 		}
 	}
@@ -361,9 +426,12 @@ func (ru *run) call(level model.Level, items []*model.Item, pitems []promptItem,
 			ru.applyOne(it, res, level, shares[it.ID])
 			continue
 		}
-		if ru.cancelled() {
-			// 取消导致没能重试：不记失败，只记 token。
+		if ru.cancelled() || noBudget {
+			// 取消或预算不够导致没能重试：不记失败，只记 token；预算不够的留到下次。
 			ru.saveTokens([]*model.Item{it}, shares)
+			if noBudget {
+				ru.rep.Queued++
+			}
 			continue
 		}
 		err := errs[it.ID]
@@ -413,16 +481,10 @@ func (ru *run) modify(id int64, fn func(cur *model.Item) error) bool {
 	return true
 }
 
-// applyOne 写回 AI 结果。snap 是批次开始时读出的条目；用户在调用期间改过分类或状态的，
-// 以用户的为准，AI 不再改分类。
+// applyOne 写回 AI 结果：在最新行上 apply（用户在调用期间改成手动分类或改了状态的，apply 不再改分类）。
 func (ru *run) applyOne(snap *model.Item, res Result, level model.Level, tokens int64) {
 	ok := ru.modify(snap.ID, func(cur *model.Item) error {
-		touched := cur.Category != snap.Category || cur.Status != snap.Status || cur.CategoryBy != snap.CategoryBy
-		cat, status := cur.Category, cur.Status
 		apply(cur, res, level)
-		if touched {
-			cur.Category, cur.Status = cat, status
-		}
 		cur.TokensUsed += tokens
 		return nil
 	})
@@ -466,7 +528,7 @@ func (ru *run) saveTokens(items []*model.Item, shares map[int64]int64) {
 // skip 处理没有内容可交给 AI 的条目：未整理的归到资料，直接标记为已处理。
 func (ru *run) skip(snap *model.Item) {
 	ok := ru.modify(snap.ID, func(cur *model.Item) error {
-		if cur.Category == model.CatInbox && cur.CategoryBy == model.ByAI {
+		if cur.Category == model.CatInbox && cur.CategoryBy == model.ByAI && cur.Status == model.DefaultStatus(cur.Category) {
 			cur.Category, cur.Status = model.CatArchive, model.DefaultStatus(model.CatArchive)
 		}
 		if cur.Level.Rank() > cur.ProcessedLevel.Rank() {

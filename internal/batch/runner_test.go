@@ -372,7 +372,7 @@ func TestImagesSentWhenEnabled(t *testing.T) {
 func TestBusyWhenLeaseHeld(t *testing.T) {
 	e := newTEnv(t, nil)
 	e.add(t, &model.Item{RawText: "a"})
-	e.st.TryLease(context.Background(), "batch.lease", e.clk.Now(), time.Hour)
+	e.st.TryLease(context.Background(), "batch.lease", "other", e.clk.Now(), time.Hour)
 	rep := e.run(t)
 	if !rep.Busy || len(e.llm.Requests()) != 0 {
 		t.Fatalf("report = %+v", rep)
@@ -493,8 +493,8 @@ func TestConcurrentRunIsBusy(t *testing.T) {
 	if err != nil || !rep2.Busy {
 		t.Errorf("second run = %+v, %v", rep2, err)
 	}
-	if v, ok, _ := e.st.GetKV(context.Background(), leaseKey); !ok || v != fmt.Sprint(e.clk.Now().Add(leaseTTL).Unix()) || leaseTTL < 2*time.Hour {
-		t.Errorf("lease value = %q ok=%v ttl=%v", v, ok, leaseTTL)
+	if v, ok, _ := e.st.GetKV(context.Background(), leaseKey); !ok || !strings.HasPrefix(v, fmt.Sprint(e.clk.Now().Add(leaseTTL).Unix())+":") {
+		t.Errorf("lease value = %q ok=%v", v, ok)
 	}
 	close(release)
 	wg.Wait()
@@ -534,5 +534,109 @@ func TestCancelledRunRecordsNoFailure(t *testing.T) {
 	}
 	if _, ok, _ := e.st.GetKV(context.Background(), leaseKey); ok {
 		t.Fatal("lease not released after cancel")
+	}
+}
+
+// 已整理成待办并标了完成的条目，调高深度后再整理：AI 不改分类和状态，只补 detail。
+func TestDoneTodoKeepsCategoryOnDeeperRun(t *testing.T) {
+	e := newTEnv(t, nil)
+	id := e.add(t, &model.Item{RawText: "研究 SQLite WAL", Category: model.CatTodo, Status: model.StatusDone, ProcessedLevel: model.LevelLight, Level: model.LevelMedium})
+	e.llm.Enqueue(llmtest.JSON(obj{"items": []obj{{"id": id, "category": "research", "title": "WAL", "detail": "WAL 介绍。值得看。"}}}))
+	if rep := e.run(t); rep.Processed != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	it := e.get(t, id)
+	if it.Category != model.CatTodo || it.Status != model.StatusDone || it.Detail != "WAL 介绍。值得看。" || it.ProcessedLevel != model.LevelMedium {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+// 附件记录正常但图片文件丢了、原文和链接都为空：跳过，不发空请求。
+func TestMissingImageFileSkipped(t *testing.T) {
+	e := newTEnv(t, func(s *model.Settings) { s.AI.Images = true })
+	id := e.add(t, &model.Item{RawText: ""})
+	e.st.InsertAttachment(context.Background(), &model.Attachment{ItemID: id, Kind: "image", State: "ok", RelPath: "2026/10/gone.jpg"})
+	rep := e.run(t)
+	if rep.Skipped != 1 || len(e.llm.Requests()) != 0 {
+		t.Fatalf("report = %+v requests=%d", rep, len(e.llm.Requests()))
+	}
+	if it := e.get(t, id); it.Category != model.CatArchive || it.ProcessedLevel != model.LevelLight || it.ProcessAttempts != 0 {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+// 格式不对、但预算不够重试：留到下次，不计失败次数。
+func TestRetrySkippedForBudgetQueues(t *testing.T) {
+	e := newTEnv(t, nil)
+	id := e.add(t, &model.Item{RawText: "随便一条"})
+	est := Estimate(buildRequest(model.LevelLight, e.clk.Now(), nil, []promptItem{toPromptItem(e.get(t, id), lightTextRunes)}, nil, ""))
+	s, _ := e.st.LoadSettings(context.Background())
+	s.AI.DailyTokenLimit = est*3/2 + 10 // 第一次放得下；按估算记账后剩余不够再试一次
+	e.st.SaveSettings(context.Background(), s)
+	e.llm.Enqueue(llmtest.Reply{Content: "抱歉，我无法处理"})
+	rep := e.run(t)
+	if rep.Queued != 1 || rep.Failed != 0 || len(e.llm.Requests()) != 1 {
+		t.Fatalf("report = %+v requests=%d", rep, len(e.llm.Requests()))
+	}
+	if it := e.get(t, id); it.ProcessAttempts != 0 || it.ProcessError != "" || it.TokensUsed != est {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timeout")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// 整理期间心跳按当前时间续期租约，结束后释放。
+func TestLeaseHeartbeatRenews(t *testing.T) {
+	e := newTEnv(t, nil)
+	e.r.renewEvery = 5 * time.Millisecond
+	id := e.add(t, &model.Item{RawText: "a"})
+	ctx := context.Background()
+	start := e.clk.Now()
+	e.hook(func(context.Context) {
+		e.clk.Advance(5 * time.Minute)
+		want := fmt.Sprint(start.Add(5*time.Minute+leaseTTL).Unix()) + ":"
+		waitFor(t, func() bool {
+			v, _, _ := e.st.GetKV(ctx, leaseKey)
+			return strings.HasPrefix(v, want)
+		})
+	})
+	e.llm.Enqueue(llmtest.JSON(obj{"items": []obj{{"id": id, "category": "idea", "title": "a"}}}))
+	if rep := e.run(t); rep.Processed != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if _, ok, _ := e.st.GetKV(ctx, leaseKey); ok {
+		t.Fatal("lease not released")
+	}
+}
+
+// 租约被别的进程接管（例如本进程卡太久过期了）：心跳发现后取消本次整理，且不释放别人的租约。
+func TestLeaseLostCancelsRun(t *testing.T) {
+	e := newTEnv(t, nil)
+	e.r.renewEvery = 5 * time.Millisecond
+	e.add(t, &model.Item{RawText: "a"})
+	ctx := context.Background()
+	e.hook(func(runCtx context.Context) {
+		e.st.SetKV(ctx, leaseKey, "9999999999:other")
+		select {
+		case <-runCtx.Done():
+		case <-time.After(5 * time.Second):
+			t.Error("run not cancelled after lease lost")
+		}
+	})
+	rep, err := e.r.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "租约") {
+		t.Fatalf("err = %v rep = %+v", err, rep)
+	}
+	if v, _, _ := e.st.GetKV(ctx, leaseKey); v != "9999999999:other" {
+		t.Fatalf("other's lease touched: %q", v)
 	}
 }
