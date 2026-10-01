@@ -7,11 +7,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
+	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
 
 const testPW = "open sesame 123"
@@ -473,4 +478,114 @@ func TestSessionCookieAttrs(t *testing.T) {
 			t.Errorf("%s 删除: %+v", c.name, del)
 		}
 	}
+}
+
+// 并发提交错误密码绕不过锁定：真正校验的次数不超过 MaxFails，锁定后正确密码也被拒；校验串行进行。
+func TestConcurrentSigninCannotBypassLockout(t *testing.T) {
+	e := newEnv(t)
+	e.setPassword(t, testPW)
+	var calls, running, maxRunning atomic.Int32
+	e.web.verify = func(rec *auth.Record, pw string) bool {
+		calls.Add(1)
+		n := running.Add(1)
+		for {
+			m := maxRunning.Load()
+			if n <= m || maxRunning.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond) // 模拟 PBKDF2 的耗时，让请求真正重叠
+		running.Add(-1)
+		return rec.Verify(pw)
+	}
+
+	const n = 40
+	codes := make(chan int, n+1)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, _ := e.do(t, "POST", "/signin", url.Values{"password": {"wrong guess"}}, nil)
+			codes <- resp.StatusCode
+		}()
+	}
+	// 错误密码还在排队校验时，送一个正确密码
+	eventually(t, func() bool { return e.web.limiter.Locked() > 0 })
+	resp, _ := e.do(t, "POST", "/signin", url.Values{"password": {testPW}}, nil)
+	if resp.StatusCode != http.StatusTooManyRequests || sessionOf(resp) != nil {
+		t.Fatalf("锁定后正确密码：%d", resp.StatusCode)
+	}
+	wg.Wait()
+	close(codes)
+	count := map[int]int{}
+	for c := range codes {
+		count[c]++
+	}
+	if c := calls.Load(); c > auth.MaxFails {
+		t.Fatalf("校验了 %d 次，超过 %d", c, auth.MaxFails)
+	}
+	if count[http.StatusUnauthorized]+count[http.StatusTooManyRequests] != n || count[http.StatusTooManyRequests] < n-auth.MaxFails {
+		t.Fatalf("状态码分布 %v", count)
+	}
+	if m := maxRunning.Load(); m != 1 {
+		t.Fatalf("同时在跑的校验 %d 个", m)
+	}
+	if strings.Count(e.logs.String(), "level=WARN") != 1 {
+		t.Fatalf("WARN 应只有一条：%s", e.logs.String())
+	}
+}
+
+// 首次设置期间密码已被别人设好：不覆盖，提示去登录。
+func TestFirstSetPasswordDoesNotOverwrite(t *testing.T) {
+	e := newEnv(t)
+	e.web.kdfSem <- struct{}{} // 占住 PBKDF2，让设置请求停在哈希之前
+	type result struct {
+		resp *http.Response
+		body string
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, body := e.do(t, "POST", "/settings/password", url.Values{"new": {"from browser A"}, "confirm": {"from browser A"}}, nil)
+		done <- result{resp, body}
+	}()
+	time.Sleep(50 * time.Millisecond) // 请求已过 guard（当时没设密码），在等 PBKDF2
+	e.setPassword(t, testPW)          // 另一方（命令行或另一个浏览器）先设好了
+	<-e.web.kdfSem
+	r := <-done
+	if r.resp.StatusCode != http.StatusConflict || sessionOf(r.resp) != nil {
+		t.Fatalf("应拒绝覆盖：%d", r.resp.StatusCode)
+	}
+	mustContain(t, r.body, "已设置过密码", `action="/signin"`)
+	raw, _ := e.st.PasswordRecord(t.Context())
+	if rec, _ := auth.Decode(raw); !rec.Verify(testPW) {
+		t.Fatal("先设的密码被覆盖了")
+	}
+}
+
+// 设了密码时，需要登录的响应（页面、附件）不进浏览器缓存；没设密码时保持原样。
+func TestNoStoreWhenPasswordSet(t *testing.T) {
+	e := newEnv(t)
+	os.MkdirAll(filepath.Join(e.media, "2026/10"), 0o700)
+	os.WriteFile(filepath.Join(e.media, "2026/10/1-1.jpg"), []byte("\xff\xd8\xff"), 0o600)
+	id := e.item(t, &model.Item{MsgID: "1", RawText: "x"})
+	if _, err := e.st.InsertAttachment(t.Context(), &model.Attachment{ItemID: id, Kind: "image", RelPath: "2026/10/1-1.jpg", State: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(c *http.Cookie, path, want string) {
+		t.Helper()
+		resp, _ := e.do(t, "GET", path, nil, c)
+		if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != want {
+			t.Errorf("%s: %d Cache-Control=%q want %q", path, resp.StatusCode, resp.Header.Get("Cache-Control"), want)
+		}
+	}
+	check(nil, "/", "")
+	check(nil, "/media/2026/10/1-1.jpg", "private, max-age=86400")
+
+	e.setPassword(t, testPW)
+	c := e.signin(t, "", testPW)
+	for _, p := range []string{"/", "/items/1", "/settings", "/media/2026/10/1-1.jpg"} {
+		check(c, p, "no-store")
+	}
+	check(c, "/static/app.css", "")
 }

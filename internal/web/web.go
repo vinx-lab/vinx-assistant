@@ -84,7 +84,9 @@ type Server struct {
 	limiter    *auth.Limiter // 密码失败计数（登录和改密码共用）
 	iter       int           // 新密码的 PBKDF2 迭代次数；测试里调小
 	authMu     sync.Mutex
-	lastRecord string // 上次读到的密码记录，变了就清空失败计数
+	lastRecord string                          // 上次读到的密码记录，变了就清空失败计数
+	kdfSem     chan struct{}                   // PBKDF2 串行化，见 serialKDF
+	verify     func(*auth.Record, string) bool // 校验密码；测试里换成计数的版本
 }
 
 var pageNames = []string{"board", "item", "login", "search", "settings", "usage"}
@@ -102,7 +104,8 @@ func New(d Deps) *Server {
 		panic(err)
 	}
 	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts),
-		limiter: auth.NewLimiter(d.Clock), iter: auth.DefaultIterations}
+		limiter: auth.NewLimiter(d.Clock), iter: auth.DefaultIterations, kdfSem: make(chan struct{}, 1),
+		verify: func(rec *auth.Record, pw string) bool { return rec.Verify(pw) }}
 	for _, name := range pageNames {
 		s.pages[name] = template.Must(template.New(name).Funcs(s.funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html"))

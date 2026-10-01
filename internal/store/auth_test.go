@@ -107,3 +107,28 @@ func TestSessions(t *testing.T) {
 		t.Fatalf("ClearPassword 后 sessions = %d", n)
 	}
 }
+
+func TestSetPasswordIfUnset(t *testing.T) {
+	st, _ := openTest(t)
+	ctx := context.Background()
+	now := clock.At(2026, 10, 1, 9, 0)
+	st.CreateSession(ctx, "stale", now, now.Add(time.Hour))
+	ok, err := st.SetPasswordIfUnset(ctx, "first")
+	if err != nil || !ok {
+		t.Fatalf("首次：%v %v", ok, err)
+	}
+	if n, _ := st.CountSessions(ctx); n != 0 {
+		t.Fatalf("首次设置应吊销会话：%d", n)
+	}
+	st.CreateSession(ctx, "kept", now, now.Add(time.Hour))
+	ok, err = st.SetPasswordIfUnset(ctx, "second")
+	if err != nil || ok {
+		t.Fatalf("已设时：%v %v", ok, err)
+	}
+	if v, _ := st.PasswordRecord(ctx); v != "first" {
+		t.Fatalf("不应覆盖：%q", v)
+	}
+	if n, _ := st.CountSessions(ctx); n != 1 {
+		t.Fatalf("没写入时不应动会话：%d", n)
+	}
+}

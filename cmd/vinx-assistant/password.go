@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/vinx-lab/vinx-assistant/internal/app"
 	"github.com/vinx-lab/vinx-assistant/internal/auth"
@@ -23,6 +25,9 @@ import (
 //	vinx-assistant password --stdin    从标准输入读一行作为新密码，不确认（脚本用）
 //	vinx-assistant password --clear    清除密码，恢复无密码状态
 func cmdPassword(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// main 已接住 SIGINT、SIGTERM；输入时回显关着，挂断（SIGHUP）和 Ctrl-\（SIGQUIT）也要先恢复回显再退出
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGQUIT)
+	defer stop()
 	fs := flag.NewFlagSet("password", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fromStdin := fs.Bool("stdin", false, "从标准输入读一行作为新密码（不确认）")
@@ -97,7 +102,7 @@ func readNewPassword(ctx context.Context, stdin io.Reader, prompt io.Writer, onc
 	if f, ok := stdin.(*os.File); ok && isTerminal(f) {
 		restore, err := echoOff()
 		if err != nil {
-			return "", fmt.Errorf("无法关闭终端回显（%v）；可改用：printf '%%s\\n' '新密码' | vinx-assistant password --stdin", err)
+			return "", fmt.Errorf("无法关闭终端回显（%v）。可以把新密码写进一个只有自己能读的文件，再运行 vinx-assistant password --stdin < 文件，用完删掉文件；不要把密码直接写在命令行里", err)
 		}
 		defer restore()
 	}
@@ -149,7 +154,7 @@ func isTerminal(f *os.File) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// echoOff 用 stty 关闭终端回显（不引入 x/term 依赖），返回恢复函数。只支持类 Unix 系统。
+// echoOff 用 stty 关闭终端回显（不引入 x/term 依赖），返回恢复函数：恢复成 stty -g 保存的原状态。只支持类 Unix 系统。
 func echoOff() (func(), error) {
 	if runtime.GOOS == "windows" {
 		return nil, errors.New("Windows 不支持")
@@ -163,12 +168,19 @@ func echoOff() (func(), error) {
 		c.Stdin = tty
 		return c.Run()
 	}
+	save := exec.Command("stty", "-g")
+	save.Stdin = tty
+	out, err := save.Output()
+	saved := strings.TrimSpace(string(out))
+	if err != nil || saved == "" {
+		saved = "echo"
+	}
 	if err := stty("-echo"); err != nil {
 		tty.Close()
 		return nil, err
 	}
 	return func() {
-		stty("echo")
+		stty(saved)
 		tty.Close()
 	}, nil
 }

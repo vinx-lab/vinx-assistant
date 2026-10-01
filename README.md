@@ -119,6 +119,7 @@
 
 - **子路径**：设置 `--base-path /todo` 后，所有页面地址都带这个前缀。反向代理不要去掉前缀，原样转发 `/todo/...` 即可。访问 `/todo` 会被 308 重定向到 `/todo/`。
 - **域名**：为了防止 DNS rebinding，网页默认只接受 `localhost`、回环地址和本机网卡 IP 作为 Host。用域名访问时（如 Tailscale MagicDNS），需要把域名写进 `VINX_ALLOWED_HOSTS`。
+- **HTTPS 与登录 cookie**：程序只信任从回环地址连进来的代理发的 `X-Forwarded-Proto`。代理不在本机时，登录 cookie 不带 `Secure`，一旦用 http 访问同一域名，会话令牌就会明文发出。建议代理与程序放在同一台机器，或者经 HTTPS 直连。
 
 ## 安全须知
 

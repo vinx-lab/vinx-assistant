@@ -106,6 +106,10 @@ func (s *Server) guard(kind guardKind, h http.HandlerFunc) http.Handler {
 			}
 			return
 		}
+		if a.Enabled {
+			// 登录后的内容不进浏览器缓存：共用设备上退出后按返回键或打开附件地址看不到（没设密码时保持原样）
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		h(w, r.WithContext(context.WithValue(r.Context(), authKey{}, a)))
 	})
 }
@@ -184,18 +188,37 @@ func lockedMsg(d time.Duration) string {
 	return "密码错误次数过多，已暂停登录，请 " + strconv.Itoa(auth.Minutes(d)) + " 分钟后再试。忘记密码可在服务器上运行 vinx-assistant password 重置。"
 }
 
+// serialKDF 让 PBKDF2（登录校验、改密码时的哈希）同一时刻最多跑一个，防止并发请求把 CPU 占满。
+// 排队时请求被取消则返回 false，fn 不执行。
+func (s *Server) serialKDF(ctx context.Context, fn func()) bool {
+	select {
+	case s.kdfSem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	defer func() { <-s.kdfSem }()
+	fn()
+	return true
+}
+
 // checkPassword 在失败计数的保护下校验密码。返回给用户的错误信息和 HTTP 状态；通过时 msg 为空。
-func (s *Server) checkPassword(rec *auth.Record, pw string, what string) (string, int) {
-	if d := s.limiter.Locked(); d > 0 {
+// 先向 limiter 预占一次失败（检查锁定和占位是原子的），校验通过再归还，所以并发请求也绕不过锁定。
+func (s *Server) checkPassword(ctx context.Context, rec *auth.Record, pw string, what string) (string, int) {
+	tk, d := s.limiter.Begin()
+	if d > 0 {
 		return lockedMsg(d), http.StatusTooManyRequests
 	}
-	if rec.Verify(pw) {
-		s.limiter.Reset()
-		return "", http.StatusOK
+	var ok bool
+	if !s.serialKDF(ctx, func() { ok = s.verify(rec, pw) }) {
+		s.limiter.Done(tk, true) // 没校验就被取消：不算一次尝试
+		return "请求已取消，请重试。", http.StatusServiceUnavailable
 	}
-	if s.limiter.Fail() {
+	if s.limiter.Done(tk, ok) {
 		s.d.Log.Warn("密码错误次数过多，暂停登录", "fails", auth.MaxFails, "window", auth.FailWindow.String(), "lock", auth.LockFor.String())
 		return lockedMsg(s.limiter.Locked()), http.StatusTooManyRequests
+	}
+	if ok {
+		return "", http.StatusOK
 	}
 	return what + "不对。", http.StatusUnauthorized
 }
@@ -236,7 +259,7 @@ func (s *Server) signinPost(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, next)
 		return
 	}
-	if msg, code := s.checkPassword(rec, r.FormValue("password"), "密码"); msg != "" {
+	if msg, code := s.checkPassword(r.Context(), rec, r.FormValue("password"), "密码"); msg != "" {
 		s.render(w, code, "signin", signinData{Title: "登录", Next: next, Error: msg})
 		return
 	}
@@ -295,7 +318,7 @@ func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, "/settings/password")
 			return
 		}
-		if msg, code := s.checkPassword(rec, r.FormValue("current"), "当前密码"); msg != "" {
+		if msg, code := s.checkPassword(r.Context(), rec, r.FormValue("current"), "当前密码"); msg != "" {
 			bad(code, msg)
 			return
 		}
@@ -308,7 +331,12 @@ func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 		bad(http.StatusBadRequest, "两次输入的新密码不一致")
 		return
 	}
-	rec, err := auth.Hash(newPW, s.iter)
+	var rec auth.Record
+	var err error
+	if !s.serialKDF(r.Context(), func() { rec, err = auth.Hash(newPW, s.iter) }) {
+		http.Error(w, "请求已取消", http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -318,7 +346,18 @@ func (s *Server) passwordSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.d.Store.SetPassword(r.Context(), raw, a.TokenHash); err != nil {
+	if a.Enabled {
+		err = s.d.Store.SetPassword(r.Context(), raw, a.TokenHash)
+	} else {
+		// 首次设置用条件写入：处理期间别人（另一个浏览器或命令行）已经设好密码时不覆盖
+		var inserted bool
+		inserted, err = s.d.Store.SetPasswordIfUnset(r.Context(), raw)
+		if err == nil && !inserted {
+			s.render(w, http.StatusConflict, "signin", signinData{Title: "登录", Next: "/settings/password", Error: "已设置过密码，请登录。"})
+			return
+		}
+	}
+	if err != nil {
 		s.fail(w, err)
 		return
 	}

@@ -96,13 +96,22 @@ func TestToken(t *testing.T) {
 	}
 }
 
+// fail 预占一次并记为失败，返回是否触发锁定；锁定中返回 false。
+func fail(l *Limiter) (locked bool, rejected bool) {
+	tk, d := l.Begin()
+	if d > 0 {
+		return false, true
+	}
+	return l.Done(tk, false), false
+}
+
 func TestLimiter(t *testing.T) {
 	clk := clock.NewFake(clock.At(2026, 10, 1, 9, 0))
 	l := NewLimiter(clk)
 
 	// 9 次不锁
 	for i := 0; i < MaxFails-1; i++ {
-		if l.Fail() {
+		if lk, _ := fail(l); lk {
 			t.Fatalf("第 %d 次就锁了", i+1)
 		}
 	}
@@ -111,19 +120,22 @@ func TestLimiter(t *testing.T) {
 	}
 	// 窗口滑过去：早先的失败不再计数
 	clk.Advance(FailWindow)
-	if l.Fail() {
+	if lk, _ := fail(l); lk {
 		t.Fatal("窗口外的失败不应计数")
 	}
 	for i := 0; i < MaxFails-2; i++ {
-		if l.Fail() {
+		if lk, _ := fail(l); lk {
 			t.Fatalf("窗口内第 %d 次就锁了", i+2)
 		}
 	}
-	if !l.Fail() {
+	if lk, _ := fail(l); !lk {
 		t.Fatal("窗口内第 10 次应锁定")
 	}
 	if d := l.Locked(); d != LockFor || Minutes(d) != 15 {
 		t.Fatalf("locked %v", d)
+	}
+	if _, rej := fail(l); !rej {
+		t.Fatal("锁定中应直接拒绝")
 	}
 	clk.Advance(14*time.Minute + 30*time.Second)
 	if d := l.Locked(); Minutes(d) != 1 {
@@ -134,11 +146,11 @@ func TestLimiter(t *testing.T) {
 		t.Fatal("15 分钟后应解锁")
 	}
 	// 解锁后重新计数
-	if l.Fail() {
+	if lk, rej := fail(l); lk || rej {
 		t.Fatal("解锁后第一次失败不应锁")
 	}
 	for i := 0; i < MaxFails-1; i++ {
-		l.Fail()
+		fail(l)
 	}
 	if l.Locked() == 0 {
 		t.Fatal("应再次锁定")
@@ -146,5 +158,50 @@ func TestLimiter(t *testing.T) {
 	l.Reset()
 	if l.Locked() != 0 {
 		t.Fatal("Reset 后应解锁")
+	}
+}
+
+func TestLimiterReservation(t *testing.T) {
+	clk := clock.NewFake(clock.At(2026, 10, 1, 9, 0))
+	l := NewLimiter(clk)
+
+	// 并发：同时预占，最多 MaxFails 个拿到名额，其余直接拒绝
+	var tickets []Ticket
+	for i := 0; i < MaxFails*3; i++ {
+		if tk, d := l.Begin(); d == 0 {
+			tickets = append(tickets, tk)
+		}
+	}
+	if len(tickets) != MaxFails {
+		t.Fatalf("拿到名额 %d 个", len(tickets))
+	}
+	// 前 9 个失败，第 10 个（触发锁定的那个）密码正确：归还占位、解除锁定
+	for _, tk := range tickets[:MaxFails-1] {
+		if l.Done(tk, false) {
+			t.Fatal("非触发锁定的失败不应报告锁定")
+		}
+	}
+	l.Done(tickets[MaxFails-1], true)
+	if l.Locked() != 0 {
+		t.Fatal("触发锁定的那次密码正确时应解除锁定")
+	}
+	// 之前 9 次失败还在窗口里：下一次失败就锁定
+	if lk, _ := fail(l); !lk {
+		t.Fatal("第 10 次失败应锁定")
+	}
+
+	// 成功只归还自己的占位，不清掉别的失败
+	l.Reset()
+	a, _ := l.Begin()
+	b, _ := l.Begin()
+	l.Done(a, true)
+	l.Done(b, false)
+	for i := 0; i < MaxFails-2; i++ {
+		if lk, _ := fail(l); lk {
+			t.Fatalf("第 %d 次就锁了", i+2)
+		}
+	}
+	if lk, _ := fail(l); !lk {
+		t.Fatal("累计 10 次失败应锁定")
 	}
 }

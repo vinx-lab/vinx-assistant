@@ -31,6 +31,26 @@ func (s *Store) SetPassword(ctx context.Context, record, keep string) error {
 	})
 }
 
+// SetPasswordIfUnset 只在还没设密码时保存记录（首次设置用，防止覆盖并发设好的密码），并吊销全部会话。
+// 已有密码时不改动任何东西，返回 false。
+func (s *Store) SetPasswordIfUnset(ctx context.Context, record string) (bool, error) {
+	var inserted bool
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = ?)`, authKey, record, authKey)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil || n == 0 {
+			return err
+		}
+		inserted = true
+		_, err = tx.ExecContext(ctx, `DELETE FROM web_sessions`)
+		return err
+	})
+	return inserted, err
+}
+
 // ClearPassword 清除密码并吊销所有会话，恢复成无密码状态。
 func (s *Store) ClearPassword(ctx context.Context) error {
 	return s.Tx(ctx, func(tx *sql.Tx) error {
