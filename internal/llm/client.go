@@ -83,11 +83,24 @@ type Client struct {
 	apiKey  string
 }
 
+// maskedError 的文字已打码，同时保留原始错误链，调用方仍可 errors.Is / errors.As。
+type maskedError struct {
+	msg string
+	err error
+}
+
+func (e *maskedError) Error() string { return e.msg }
+func (e *maskedError) Unwrap() error { return e.err }
+
+func (c *Client) wrap(err error) error {
+	return &maskedError{msg: c.mask(err.Error()), err: err}
+}
+
 func New(baseURL, apiKey string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{}
 	}
-	return &Client{BaseURL: baseURL, HTTP: hc, Timeout: 180 * time.Second, apiKey: apiKey}
+	return &Client{BaseURL: baseURL, HTTP: hc, Timeout: 180 * time.Second, apiKey: strings.TrimSpace(apiKey)}
 }
 
 var versionSuffix = regexp.MustCompile(`/v\d+$`)
@@ -109,8 +122,11 @@ func (c *Client) mask(s string) string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
-	defer cancel()
+	if c.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -121,7 +137,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	req, err := http.NewRequestWithContext(ctx, method, Endpoint(c.BaseURL, path), rdr)
 	if err != nil {
-		return errors.New(c.mask(err.Error()))
+		return c.wrap(err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -131,15 +147,15 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return errors.New(c.mask(err.Error()))
+		return c.wrap(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return errors.New(c.mask(err.Error()))
+		return c.wrap(err)
 	}
 	if resp.StatusCode/100 != 2 {
-		return &HTTPError{Status: resp.StatusCode, Body: c.mask(model.TruncateRunes(strings.TrimSpace(string(data)), 300))}
+		return &HTTPError{Status: resp.StatusCode, Body: model.TruncateRunes(c.mask(strings.TrimSpace(string(data))), 300)}
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("llm: 响应不是 JSON：%w", err)
@@ -159,11 +175,17 @@ func (c *Client) Chat(ctx context.Context, req Request) (Response, error) {
 			} `json:"message"`
 		} `json:"choices"`
 		Usage Usage `json:"usage"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/chat/completions", body, &out); err != nil {
 		return Response{}, err
 	}
 	if len(out.Choices) == 0 {
+		if out.Error != nil && out.Error.Message != "" {
+			return Response{}, fmt.Errorf("llm: 服务商返回错误：%s", model.TruncateRunes(c.mask(out.Error.Message), 300))
+		}
 		return Response{}, errors.New("llm: 响应里没有 choices")
 	}
 	return Response{Content: out.Choices[0].Message.Content, Usage: out.Usage}, nil

@@ -3,6 +3,8 @@ package llm_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -87,5 +89,51 @@ func TestModels(t *testing.T) {
 	got, err := llm.New(srv.URL+"/v1", key, nil).Models(context.Background())
 	if err != nil || !reflect.DeepEqual(got, []string{"a-model", "b-model"}) {
 		t.Fatalf("models = %v err=%v", got, err)
+	}
+}
+
+func TestChatCancelKeepsChain(t *testing.T) {
+	srv := llmtest.New()
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := llm.New(srv.URL, key, nil).Chat(ctx, llm.Request{Model: "m"})
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), key) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestMaskBeforeTruncate(t *testing.T) {
+	srv := llmtest.New()
+	defer srv.Close()
+	srv.Enqueue(llmtest.Reply{Status: 500, Raw: strings.Repeat("x", 295) + key + strings.Repeat("y", 50)})
+	_, err := llm.New(srv.URL, key, nil).Chat(context.Background(), llm.Request{Model: "m"})
+	if err == nil || strings.Contains(err.Error(), "abcdef") {
+		t.Fatalf("leak: %v", err)
+	}
+}
+
+func TestKeyTrimmedAndNoTimeout(t *testing.T) {
+	srv := llmtest.New()
+	defer srv.Close()
+	srv.Enqueue(llmtest.Reply{Content: "ok"})
+	c := llm.New(srv.URL, " "+key+"\n", nil)
+	c.Timeout = 0
+	if _, err := c.Chat(context.Background(), llm.Request{Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if a := srv.Requests()[0].Auth; a != "Bearer "+key {
+		t.Fatalf("auth = %q", a)
+	}
+}
+
+func TestChat200ErrorEnvelope(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"error":{"message":"quota exceeded for ` + key + `"}}`))
+	}))
+	defer ts.Close()
+	_, err := llm.New(ts.URL, key, nil).Chat(context.Background(), llm.Request{Model: "m"})
+	if err == nil || !strings.Contains(err.Error(), "quota exceeded") || strings.Contains(err.Error(), key) {
+		t.Fatalf("err = %v", err)
 	}
 }
