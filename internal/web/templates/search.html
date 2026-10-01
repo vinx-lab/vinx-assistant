@@ -1,0 +1,24 @@
+{{define "content"}}
+<form method="get" action="/search" class="stack">
+  <label>关键词<input type="search" name="q" value="{{.Q}}" autofocus></label>
+  <label>分类
+    <select name="cat"><option value="">全部</option>{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Cat}}selected{{end}}>{{catName .}}</option>{{end}}</select>
+  </label>
+  <label>状态
+    <select name="status"><option value="">全部</option>{{range .Statuses}}<option value="{{.}}" {{if eq . $.Status}}selected{{end}}>{{statusName .}}</option>{{end}}</select>
+  </label>
+  <label>从<input type="date" name="from" value="{{.From}}"></label>
+  <label>到<input type="date" name="to" value="{{.To}}"></label>
+  <button type="submit">搜索</button>
+</form>
+{{if .Searched}}
+<p class="meta">找到 {{len .Items}} 条</p>
+{{range .Items}}
+<article class="card">
+  <h3><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a></h3>
+  <p class="meta">{{catName .Category}} · {{statusName .Status}} · {{fmtTime .CreatedAt}}{{range .Tags}} #{{.}}{{end}}</p>
+  {{if .Summary}}<p>{{.Summary}}</p>{{end}}
+</article>
+{{end}}
+{{end}}
+{{end}}

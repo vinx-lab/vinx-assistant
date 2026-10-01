@@ -1,0 +1,17 @@
+{{define "content"}}
+<p class="status"><span class="pill">今日已用 {{.Today}}{{if .Limit}} / 上限 {{.Limit}}{{else}}（不限）{{end}}</span></p>
+<section>
+  <h2>最近 30 天</h2>
+  {{range .Days}}
+  <div class="bar"><span class="day">{{.Day}}</span><span class="track"><span class="fill w{{pct .Total $.Max}}"></span></span><span class="num">{{.Total}}</span></div>
+  {{else}}<p class="empty">还没有 AI 调用记录。</p>{{end}}
+</section>
+<section>
+  <h2>消耗最多的条目</h2>
+  {{range .Top}}<p><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a> · {{.TokensUsed}}</p>{{else}}<p class="empty">无</p>{{end}}
+</section>
+<section>
+  <h2>处理失败的条目</h2>
+  {{range .Failed}}<p><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a> · 第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</p>{{else}}<p class="empty">无</p>{{end}}
+</section>
+{{end}}

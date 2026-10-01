@@ -55,7 +55,7 @@ type Server struct {
 	hosts *hostGuard
 }
 
-var pageNames = []string{"board", "item", "login", "settings"}
+var pageNames = []string{"board", "item", "login", "search", "settings", "usage"}
 
 func New(d Deps) *Server {
 	if d.Log == nil {
@@ -90,6 +90,8 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	post("/items/{id}/deep", s.itemDeep)
 	get("/items/{id}", s.itemPage)
 	post("/items/{id}", s.itemSave)
+	get("/search", s.search)
+	get("/usage", s.usage)
 	get("/settings", s.settingsPage)
 	post("/settings/general", s.settingsGeneral)
 	post("/settings/models", s.settingsModels)
