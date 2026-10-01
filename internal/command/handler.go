@@ -29,11 +29,13 @@ type Handler struct {
 	Log        *slog.Logger
 
 	// 以下用于需要 AI 翻译的指令：Handle 只落库并立即返回，翻译与执行在后台（Start/Close/Wait）。
-	Reply      func(ctx context.Context, text string)              // 后台把结果回给用户（装配时接 ingest.Service.Reply）
-	SaveAsItem func(ctx context.Context, msgID, text string) error // AI 认为不是指令时把原消息存为普通条目；条目已存在返回 store.ErrDuplicate 或 nil
-	JobTimeout time.Duration                                       // 单条指令的 AI 调用超时，0 用默认 2 分钟
+	Reply         func(ctx context.Context, text string)              // 后台把结果回给用户（装配时接 ingest.Service.Reply）
+	SaveAsItem    func(ctx context.Context, msgID, text string) error // AI 认为不是指令时把原消息存为普通条目；条目已存在返回 store.ErrDuplicate 或 nil
+	JobTimeout    time.Duration                                       // 单条指令的 AI 调用超时，0 用默认 2 分钟
+	ThinkingAfter time.Duration                                       // AI 指令超过这么久还没出结果才回「正在理解…」，0 用默认 8 秒
 
-	w worker
+	afterFunc func(d time.Duration, f func()) (stop func() bool) // 测试替换计时器；nil 用 time.AfterFunc
+	w         worker
 }
 
 func (h *Handler) log() *slog.Logger {

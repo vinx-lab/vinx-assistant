@@ -184,8 +184,10 @@ func TestFlowAIFallbackRepliesAsync(t *testing.T) {
 	f.recv(ilinktest.TextMsg(3, ilinktest.OwnerID, "完成材料那个"))
 	f.waitAI()
 	sent := f.srv.Sent()
-	if len(sent) < 2 || sent[len(sent)-2].Text != command.Thinking {
-		t.Fatalf("want thinking reply first, sent = %+v", sent)
+	for _, m := range sent {
+		if m.Text == command.Thinking {
+			t.Fatalf("fast AI result must not be preceded by a thinking reply, sent = %+v", sent)
+		}
 	}
 	if got := f.lastSent(); !strings.Contains(got, "#2") || f.item(2).Status != model.StatusDone || f.item(1).Status != model.StatusOpen {
 		t.Fatalf("reply=%q #1=%s #2=%s", got, f.item(1).Status, f.item(2).Status)

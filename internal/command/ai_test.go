@@ -214,11 +214,12 @@ func TestHandlerUsesAI(t *testing.T) {
 	}
 }
 
-func TestHandlerAIThinkingReplyWithActionWord(t *testing.T) {
+func TestHandlerAINoImmediateReplyWithActionWord(t *testing.T) {
 	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}}
 	e, st := newAsync(t, tr)
 	todo(t, st, "交发票", nil, false)
-	if reply, handled := handle(t, e.h, "完成发票那个", ""); !handled || reply != Thinking {
+	// 不即时回「正在理解」：AI 很快出结果时只回一条，避免连发触发限流
+	if reply, handled := handle(t, e.h, "完成发票那个", ""); !handled || reply != "" {
 		t.Fatalf("immediate reply=%q handled=%v", reply, handled)
 	}
 	if got := lastReply(t, e); got != "✓ 已完成 #1 交发票" {
@@ -244,7 +245,7 @@ func TestHandlerAINoneSavesAsItem(t *testing.T) {
 	e, _ := newAsync(t, tr)
 	in := ingest.CommandInput{Text: "完成了一个新想法：做收集箱", MsgID: nextMsg()}
 	reply, handled, err := e.h.Handle(context.Background(), in)
-	if err != nil || !handled || reply != Thinking {
+	if err != nil || !handled || reply != "" {
 		t.Fatalf("reply=%q handled=%v err=%v", reply, handled, err)
 	}
 	settle(t, e.h)
@@ -302,7 +303,7 @@ func TestHandlerAIError(t *testing.T) {
 	tr := &safeTr{err: errors.New("timeout")}
 	e, _ := newAsync(t, tr)
 	reply, handled := handle(t, e.h, "完成那个", "")
-	if !handled || reply != Thinking {
+	if !handled || reply != "" {
 		t.Fatalf("reply=%q handled=%v", reply, handled)
 	}
 	if got := lastReply(t, e); !strings.Contains(got, "AI 暂时不可用") {
@@ -481,5 +482,248 @@ func TestReplyGetsDeadline(t *testing.T) {
 	settle(t, e.h)
 	if !<-got {
 		t.Fatal("Reply ctx must have a deadline")
+	}
+}
+
+// fakeTimer 替换 Handler.afterFunc：记下要等的时长和回调，由测试决定何时「到点」。
+type fakeTimer struct {
+	mu      sync.Mutex
+	d       time.Duration
+	f       func()
+	stopped bool
+}
+
+func (ft *fakeTimer) after(d time.Duration, f func()) func() bool {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	ft.d, ft.f = d, f
+	return func() bool { ft.mu.Lock(); defer ft.mu.Unlock(); ft.stopped = true; return true }
+}
+
+// fire 模拟定时器到点（即使已 Stop 也照样调用回调，检验回调自己不会在结果之后补发）。
+func (ft *fakeTimer) fire() {
+	ft.mu.Lock()
+	f := ft.f
+	ft.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
+func (ft *fakeTimer) armed() (time.Duration, bool) {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	return ft.d, ft.f != nil
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timeout waiting for condition")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestThinkingOnlyWhenAISlow(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}, gate: make(chan struct{})}
+	h, st, _ := newHandler(t, tr)
+	ft := &fakeTimer{}
+	h.afterFunc = ft.after
+	e := wire(t, h, st)
+	todo(t, st, "交发票", nil, false)
+	handle(t, h, "完成发票那个", "")
+	waitFor(t, func() bool { return tr.Calls() == 1 })
+	if d, ok := ft.armed(); !ok || d != 8*time.Second {
+		t.Fatalf("timer d=%v armed=%v", d, ok)
+	}
+	if r := e.Replies(); len(r) != 0 {
+		t.Fatalf("premature replies: %q", r)
+	}
+	ft.fire() // AI 超过 8 秒仍没出结果
+	if r := e.Replies(); len(r) != 1 || r[0] != Thinking {
+		t.Fatalf("replies = %q", r)
+	}
+	close(tr.gate)
+	settle(t, h)
+	if r := e.Replies(); len(r) != 2 || r[1] != "✓ 已完成 #1 交发票" {
+		t.Fatalf("replies = %q", r)
+	}
+}
+
+func TestNoThinkingWhenResultFirst(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}}
+	h, st, _ := newHandler(t, tr)
+	ft := &fakeTimer{}
+	h.afterFunc = ft.after
+	e := wire(t, h, st)
+	todo(t, st, "交发票", nil, false)
+	handle(t, h, "完成发票那个", "")
+	settle(t, h)
+	ft.mu.Lock()
+	stopped := ft.stopped
+	ft.mu.Unlock()
+	if !stopped {
+		t.Fatal("timer must be stopped once the result is out")
+	}
+	ft.fire() // 定时器与结果赛跑、回调晚到：也不能补发
+	if r := e.Replies(); len(r) != 1 || r[0] != "✓ 已完成 #1 交发票" {
+		t.Fatalf("replies = %q", r)
+	}
+}
+
+func TestNoThinkingWithoutActionWord(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpNone}}
+	h, st, _ := newHandler(t, tr)
+	ft := &fakeTimer{}
+	h.afterFunc = ft.after
+	e := wire(t, h, st)
+	handle(t, h, "这个也看看", "#1")
+	settle(t, h)
+	if _, ok := ft.armed(); ok || len(e.Replies()) != 0 {
+		t.Fatalf("no-word message must stay silent: armed=%v replies=%q", ok, e.Replies())
+	}
+}
+
+func enqueueN(t *testing.T, st *store.Store, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		if err := st.EnqueueAICommand(context.Background(), &store.AICommand{MsgID: id, Text: "完成发票那个", HasWord: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertPending(t *testing.T, st *store.Store, want ...string) {
+	t.Helper()
+	p, err := st.PendingAICommands(context.Background(), 10)
+	if err != nil || len(p) != len(want) {
+		t.Fatalf("pending = %+v err=%v, want %v", p, err, want)
+	}
+	for i, id := range want {
+		if p[i].MsgID != id {
+			t.Fatalf("pending = %+v, want %v", p, want)
+		}
+	}
+}
+
+// settingsTranslator 模拟真实装配：读设置要用 ctx，关停后读失败。
+func settingsTranslator(tr Translator) func(context.Context) (Translator, error) {
+	return func(ctx context.Context) (Translator, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return tr, nil
+	}
+}
+
+func TestCloseLeavesQueuedCommandsPending(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}}
+	h, st, _ := newHandler(t, nil)
+	h.Translator = settingsTranslator(tr)
+	var mu sync.Mutex
+	var replies []string
+	h.Reply = func(_ context.Context, s string) { mu.Lock(); replies = append(replies, s); mu.Unlock() }
+	h.SaveAsItem = func(context.Context, string, string) error { t.Error("must not save as item"); return nil }
+	todo(t, st, "交发票", nil, false)
+	enqueueN(t, st, "q1", "q2")
+	cmds, err := st.PendingAICommands(context.Background(), 10)
+	if err != nil || len(cmds) != 2 {
+		t.Fatalf("cmds=%+v err=%v", cmds, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 关停
+	for _, c := range cmds {
+		if h.process(ctx, c) {
+			t.Fatalf("process(%s) must stop on shutdown", c.MsgID)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(replies) != 0 || tr.Calls() != 0 {
+		t.Fatalf("replies=%q calls=%d", replies, tr.Calls())
+	}
+	assertPending(t, st, "q1", "q2")
+}
+
+func TestShutdownDuringSettingsReadIsNotNoAI(t *testing.T) {
+	// 关停恰好发生在读 AI 设置时：不能当成「没配 AI」回「没看懂」并作废
+	h, st, _ := newHandler(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	h.Translator = func(c context.Context) (Translator, error) { cancel(); return nil, c.Err() }
+	var replies []string
+	h.Reply = func(_ context.Context, s string) { replies = append(replies, s) }
+	h.SaveAsItem = func(context.Context, string, string) error { t.Error("must not save as item"); return nil }
+	enqueueN(t, st, "q1")
+	cmds, _ := st.PendingAICommands(context.Background(), 10)
+	if h.process(ctx, cmds[0]) || len(replies) != 0 {
+		t.Fatalf("replies = %q", replies)
+	}
+	assertPending(t, st, "q1")
+}
+
+// ctxTr 在 ctx 取消时才返回结果：模拟 AI 恰好在关停那一刻答完。
+type ctxTr struct{ calls chan struct{} }
+
+func (c *ctxTr) Translate(ctx context.Context, _ string, _ []model.Item, _ time.Time) (Translation, error) {
+	c.calls <- struct{}{}
+	<-ctx.Done()
+	return Translation{Op: OpList}, nil
+}
+
+func TestShutdownAfterResultLeavesRestPending(t *testing.T) {
+	tr := &ctxTr{calls: make(chan struct{}, 10)}
+	h, st, _ := newHandler(t, nil)
+	h.Translator = settingsTranslator(tr)
+	enqueueN(t, st, "q1", "q2")
+	e := wire(t, h, st)
+	<-tr.calls
+	h.Close()
+	// 第一条已拿到结果：照常回复、标完成；第二条留待下次
+	if r := e.Replies(); len(r) != 1 || !strings.Contains(r[0], "没有未完成的待办") {
+		t.Fatalf("replies = %q", r)
+	}
+	assertPending(t, st, "q2")
+}
+
+func TestStaleCommandExpired(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}}
+	h, st, clk := newHandler(t, tr)
+	todo(t, st, "交发票", nil, false)
+	ctx := context.Background()
+	old := clk.Now()
+	if err := st.EnqueueAICommand(ctx, &store.AICommand{MsgID: "old1", Text: "完成发票那个", HasWord: true, CreatedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnqueueAICommand(ctx, &store.AICommand{MsgID: "old2", Text: "这个也看看", HasWord: false, CreatedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnqueueAICommand(ctx, &store.AICommand{MsgID: "new1", Text: "列一下", HasWord: true, CreatedAt: old.Add(31 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(61 * time.Minute) // 重启时 old1/old2 已积压超过 1 小时，new1 只有 30 分钟
+	tr.mu.Lock()
+	tr.out = Translation{Op: OpList}
+	tr.mu.Unlock()
+	e := wire(t, h, st)
+	settle(t, h)
+	if tr.Calls() != 1 {
+		t.Fatalf("stale commands must not go to AI: calls=%d", tr.Calls())
+	}
+	if r := e.Replies(); len(r) != 1 || !strings.Contains(r[0], "交发票") {
+		t.Fatalf("replies = %q", r)
+	}
+	if it, _ := st.GetItem(ctx, 1); it.Status != model.StatusOpen {
+		t.Fatal("stale command must not execute")
+	}
+	if e.Saved()["old2"] != "这个也看看" || len(e.Saved()) != 1 {
+		t.Fatalf("no-word stale message must still be saved: %q", e.Saved())
+	}
+	assertPending(t, st)
+	c, err := st.AICommandByMsgID(ctx, "old1")
+	if err != nil || !c.Done || c.Reply != "" {
+		t.Fatalf("old1 = %+v err=%v", c, err)
 	}
 }
