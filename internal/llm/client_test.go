@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/llm"
 	"github.com/vinx-lab/vinx-assistant/internal/llm/llmtest"
@@ -135,5 +136,22 @@ func TestChat200ErrorEnvelope(t *testing.T) {
 	_, err := llm.New(ts.URL, key, nil).Chat(context.Background(), llm.Request{Model: "m"})
 	if err == nil || !strings.Contains(err.Error(), "quota exceeded") || strings.Contains(err.Error(), key) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestChatFinishReasonAndDefaultTimeout(t *testing.T) {
+	srv := llmtest.New()
+	defer srv.Close()
+	srv.Enqueue(llmtest.Reply{Content: `{"items":[`, FinishReason: "length"}, llmtest.Reply{Content: "ok"})
+	c := llm.New(srv.URL, key, nil)
+	if c.Timeout != 300*time.Second {
+		t.Fatalf("timeout = %v", c.Timeout)
+	}
+	resp, err := c.Chat(context.Background(), llm.Request{Model: "m"})
+	if err != nil || resp.FinishReason != "length" {
+		t.Fatalf("resp = %+v err = %v", resp, err)
+	}
+	if resp, _ = c.Chat(context.Background(), llm.Request{Model: "m"}); resp.FinishReason != "stop" {
+		t.Fatalf("resp = %+v", resp)
 	}
 }

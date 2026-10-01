@@ -24,12 +24,13 @@ func (s *Store) queryItems(ctx context.Context, q string, args ...any) ([]model.
 	return out, rows.Err()
 }
 
-// PendingForBatch 返回需要 AI 整理的条目：未整理的，或已处理深度低于要求深度的。
+// PendingForBatch 返回需要 AI 整理的条目：未整理的（还在收件箱、分类由 AI 定），或已处理深度低于要求深度的。
+// 用户手动设回收件箱的（category_by='manual'）不算未整理，不会每次都被重新整理。
 func (s *Store) PendingForBatch(ctx context.Context, maxAttempts int) ([]model.Item, error) {
 	return s.queryItems(ctx, `SELECT `+itemCols+` FROM items
 		WHERE process_attempts < ?
 		  AND status NOT IN ('cancelled', 'dropped')
-		  AND (category = 'inbox'
+		  AND ((category = 'inbox' AND category_by = 'ai')
 		       OR (CASE processed_level WHEN 'light' THEN 1 WHEN 'medium' THEN 2 WHEN 'deep' THEN 3 ELSE 0 END)
 		        < (CASE level WHEN 'light' THEN 1 WHEN 'medium' THEN 2 WHEN 'deep' THEN 3 ELSE 0 END))
 		ORDER BY id`, maxAttempts)

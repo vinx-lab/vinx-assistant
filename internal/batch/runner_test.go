@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -638,5 +639,156 @@ func TestLeaseLostCancelsRun(t *testing.T) {
 	}
 	if v, _, _ := e.st.GetKV(ctx, leaseKey); v != "9999999999:other" {
 		t.Fatalf("other's lease touched: %q", v)
+	}
+}
+
+// DeepSeek 对敏感内容返回 400 Content Exists Risk：整包被拒时拆成逐条重发，只给出问题的那条记失败。
+func TestBadRequestSplitsBatch(t *testing.T) {
+	e := newTEnv(t, nil)
+	id1 := e.add(t, &model.Item{RawText: "敏感内容"})
+	id2 := e.add(t, &model.Item{RawText: "第二条"})
+	id3 := e.add(t, &model.Item{RawText: "第三条"})
+	risk := llmtest.Reply{Status: 400, Raw: `{"error":{"message":"Content Exists Risk"}}`}
+	e.llm.Enqueue(risk, risk,
+		llmtest.JSON(obj{"items": []obj{{"id": id2, "category": "idea", "title": "二"}}}),
+		llmtest.JSON(obj{"items": []obj{{"id": id3, "category": "later", "title": "三"}}}))
+	rep := e.run(t)
+	if rep.Processed != 2 || rep.Failed != 1 || rep.Waiting != 0 || len(rep.Notes) != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if n := len(e.llm.Requests()); n != 4 {
+		t.Fatalf("requests = %d, want 4 (1 包 + 3 条)", n)
+	}
+	if it := e.get(t, id1); it.ProcessAttempts != 1 || !strings.Contains(it.ProcessError, "Content Exists Risk") || it.Category != model.CatInbox {
+		t.Fatalf("it1 = %+v", it)
+	}
+	if it := e.get(t, id2); it.Category != model.CatIdea || it.ProcessAttempts != 0 {
+		t.Fatalf("it2 = %+v", it)
+	}
+	if it := e.get(t, id3); it.Category != model.CatLater {
+		t.Fatalf("it3 = %+v", it)
+	}
+}
+
+// 单条 400：记一次失败，不停用档位，同档后面的条目照常处理；3 次后退出队列。
+func TestBadRequestSingleCountsAttempt(t *testing.T) {
+	e := newTEnv(t, nil)
+	id1 := e.add(t, &model.Item{RawText: "带图研究", Level: model.LevelMedium})
+	id2 := e.add(t, &model.Item{RawText: "另一条研究", Level: model.LevelMedium})
+	bad := llmtest.Reply{Status: 400, Raw: "image_url is not supported"}
+	e.llm.Enqueue(bad, llmtest.JSON(obj{"items": []obj{{"id": id2, "category": "research", "title": "研究", "detail": "## 要点"}}}))
+	rep := e.run(t)
+	if rep.Failed != 1 || rep.Processed != 1 || len(rep.Notes) != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if it := e.get(t, id1); it.ProcessAttempts != 1 || !strings.Contains(it.ProcessError, "HTTP 400") {
+		t.Fatalf("it1 = %+v", it)
+	}
+	e.llm.Enqueue(bad, bad)
+	e.run(t)
+	e.run(t)
+	if it := e.get(t, id1); it.ProcessAttempts != 3 {
+		t.Fatalf("attempts = %d", it.ProcessAttempts)
+	}
+	before := len(e.llm.Requests())
+	if rep := e.run(t); rep.Failed != 0 || len(e.llm.Requests()) != before {
+		t.Fatalf("item retried after max attempts: %+v", rep)
+	}
+}
+
+// 401/402/403/404/429/5xx 是服务商层面的问题：停用整档、不记失败。
+func TestProviderStatusesStopLevel(t *testing.T) {
+	for _, status := range []int{401, 402, 403, 404, 429, 503} {
+		e := newTEnv(t, nil)
+		id := e.add(t, &model.Item{RawText: "a", Level: model.LevelMedium})
+		e.add(t, &model.Item{RawText: "b", Level: model.LevelMedium})
+		e.llm.Enqueue(llmtest.Reply{Status: status, Raw: "nope"})
+		rep := e.run(t)
+		if rep.Waiting != 2 || rep.Failed != 0 || len(e.llm.Requests()) != 1 {
+			t.Fatalf("status %d: report = %+v", status, rep)
+		}
+		if it := e.get(t, id); it.ProcessAttempts != 0 {
+			t.Fatalf("status %d: attempts counted", status)
+		}
+	}
+}
+
+// slowLLM 返回一个超时很短的真实客户端，指向一个永远不回的服务。
+func slowLLM(t *testing.T) func(model.Provider) llm.Chatter {
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-done:
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(done) }) // 先于 srv.Close 执行
+	return func(p model.Provider) llm.Chatter {
+		c := llm.New(srv.URL, p.APIKey, nil)
+		c.Timeout = 50 * time.Millisecond
+		return c
+	}
+}
+
+// 单条请求超时（不是整理被取消）：记一次失败，不停用整档。
+func TestSingleTimeoutCountsAttempt(t *testing.T) {
+	e := newTEnv(t, nil)
+	id1 := e.add(t, &model.Item{RawText: "a", Level: model.LevelMedium})
+	id2 := e.add(t, &model.Item{RawText: "b", Level: model.LevelMedium})
+	e.r.NewLLM = slowLLM(t)
+	rep := e.run(t)
+	if rep.Failed != 2 || rep.Waiting != 0 || len(rep.Notes) != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	for _, id := range []int64{id1, id2} {
+		if it := e.get(t, id); it.ProcessAttempts != 1 || it.ProcessError == "" {
+			t.Fatalf("item = %+v", it)
+		}
+	}
+}
+
+// 多条一包超时仍停用整档、不记失败，避免拆开后每条再等一轮超时。
+func TestBatchTimeoutStopsLevel(t *testing.T) {
+	e := newTEnv(t, nil)
+	id := e.add(t, &model.Item{RawText: "a"})
+	e.add(t, &model.Item{RawText: "b"})
+	e.r.NewLLM = slowLLM(t)
+	rep := e.run(t)
+	if rep.Waiting != 2 || rep.Failed != 0 || len(rep.Notes) != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if it := e.get(t, id); it.ProcessAttempts != 0 {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+func TestTruncatedOutputRetriesThenFails(t *testing.T) {
+	e := newTEnv(t, nil)
+	id := e.add(t, &model.Item{RawText: "一条"})
+	cut := llmtest.Reply{Content: `{"items":[{"id":1,"categ`, FinishReason: "length", PromptTokens: 10, CompletionTokens: 5}
+	e.llm.Enqueue(cut, cut)
+	if rep := e.run(t); rep.Failed != 1 || len(e.llm.Requests()) != 2 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if it := e.get(t, id); it.ProcessAttempts != 1 || !strings.Contains(it.ProcessError, "截断") {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+// 条目在调用期间被删掉：写不回失败，不计入失败数。
+func TestFailOnDeletedItemNotCounted(t *testing.T) {
+	e := newTEnv(t, nil)
+	id := e.add(t, &model.Item{RawText: "会被删掉"})
+	e.hook(func(ctx context.Context) {
+		if _, err := e.st.DB().Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
+			t.Error(err)
+		}
+	})
+	bad := llmtest.Reply{Content: "不是 JSON"}
+	e.llm.Enqueue(bad, bad)
+	if rep := e.run(t); rep.Failed != 0 || rep.Processed != 0 {
+		t.Fatalf("report = %+v", rep)
 	}
 }

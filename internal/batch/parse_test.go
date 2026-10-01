@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -197,5 +198,47 @@ func TestApplyKeepsCategoryWhenStatusNotDefault(t *testing.T) {
 	}
 	if it.Detail != "笔记" || it.ProcessedLevel != model.LevelMedium {
 		t.Fatalf("fields not applied: %+v", it)
+	}
+}
+
+func TestParseItemsTagsAsString(t *testing.T) {
+	content := `{"items":[
+		{"id":1,"category":"todo","tags":"发票, 财务、报销 月底"},
+		{"id":2,"category":"todo","tags":["a","b"]},
+		{"id":3,"category":"todo","tags":null},
+		{"id":4,"category":"todo","tags":""}
+	]}`
+	res, errs, err := parseItems(content, items(1, 2, 3, 4), false)
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("err=%v errs=%v", err, errs)
+	}
+	if want := []string{"发票", "财务", "报销", "月底"}; !reflect.DeepEqual(res[1].Tags, want) {
+		t.Fatalf("tags = %q", res[1].Tags)
+	}
+	if !reflect.DeepEqual(res[2].Tags, []string{"a", "b"}) || len(res[3].Tags) != 0 || len(res[4].Tags) != 0 {
+		t.Fatalf("res = %+v", res)
+	}
+}
+
+func TestParseItemsTopLevelArray(t *testing.T) {
+	content := "好的，结果如下：\n```json\n" + `[{"id":1,"category":"todo","tags":["x"]},{"id":2,"category":"idea"}]` + "\n```"
+	res, errs, err := parseItems(content, items(1, 2), false)
+	if err != nil || len(errs) != 0 || res[1].Category != model.CatTodo || res[2].Category != model.CatIdea {
+		t.Fatalf("res=%+v errs=%v err=%v", res, errs, err)
+	}
+	// 对象里含数组时仍按对象解析。
+	res, _, err = parseItems(`{"items":[{"id":1,"category":"later"}]}`, items(1), false)
+	if err != nil || res[1].Category != model.CatLater {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestParseItemsUnknownPriorityWarns(t *testing.T) {
+	res, errs, err := parseItems(`{"items":[{"id":1,"category":"todo","priority":"urgent"}]}`, items(1), false)
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("err=%v errs=%v", err, errs)
+	}
+	if res[1].Priority != model.PriorityNone || len(res[1].Warnings) != 1 || !strings.Contains(res[1].Warnings[0], "urgent") {
+		t.Fatalf("res = %+v", res[1])
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
@@ -42,12 +43,31 @@ type Result struct {
 type rawResult struct {
 	ID       json.Number `json:"id"`
 	Category string      `json:"category"`
-	Tags     []string    `json:"tags"`
+	Tags     flexTags    `json:"tags"`
 	Title    string      `json:"title"`
 	Summary  string      `json:"summary"`
 	Detail   string      `json:"detail"`
 	Due      string      `json:"due"`
 	Priority string      `json:"priority"`
+}
+
+// flexTags 兼容模型把 tags 写成数组或一个字符串（「a,b」「a、b」「a b」）的情况，null 视为空。
+type flexTags []string
+
+func (f *flexTags) UnmarshalJSON(b []byte) error {
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*f = arr
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("tags 既不是数组也不是字符串：%s", b)
+	}
+	*f = strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、' || r == ';' || r == '；' || unicode.IsSpace(r)
+	})
+	return nil
 }
 
 // extractJSON 取第一个「{」到最后一个「}」之间的内容，顺带去掉代码块和前后的说明文字。
@@ -57,6 +77,22 @@ func extractJSON(s string) (string, error) {
 		return "", errors.New("AI 返回的不是 JSON")
 	}
 	return s[i : j+1], nil
+}
+
+// extractArray 处理模型省掉外层 {"items": ...}、直接回一个数组的情况：「[」出现在第一个「{」之前且能解析成数组时返回 true。
+func extractArray(s string) ([]rawResult, bool) {
+	i, j := strings.Index(s, "["), strings.LastIndex(s, "]")
+	if i < 0 || j < i {
+		return nil, false
+	}
+	if k := strings.Index(s, "{"); k >= 0 && k < i {
+		return nil, false
+	}
+	var arr []rawResult
+	if json.Unmarshal([]byte(s[i:j+1]), &arr) != nil {
+		return nil, false
+	}
+	return arr, true
 }
 
 var dueLayouts = []struct {
@@ -100,11 +136,15 @@ func toResult(raw rawResult, it *model.Item, needDetail bool) (Result, error) {
 	if !ok {
 		return Result{}, fmt.Errorf("AI 给的分类不合法：%q", raw.Category)
 	}
+	var warnings []string
 	prio, ok := priorityAlias[strings.ToLower(strings.TrimSpace(raw.Priority))]
 	if !ok {
-		return Result{}, fmt.Errorf("AI 给的优先级不合法：%q", raw.Priority)
+		// 优先级是次要字段，认不出就当没有，不为它判整条失败。
+		prio = model.PriorityNone
+		warnings = append(warnings, fmt.Sprintf("优先级 %q 认不出，按无优先级处理", raw.Priority))
 	}
 	res := Result{
+		Warnings: warnings,
 		ID:       id,
 		Category: cat,
 		Priority: prio,
@@ -131,17 +171,22 @@ func toResult(raw rawResult, it *model.Item, needDetail bool) (Result, error) {
 // parseItems 解析并校验 AI 的回答。不属于本批的 id 忽略；漏掉或不合法的条目放进 errs。
 // 整个回答不是 JSON、或一条可用的都没有时返回 err，调用方据此重试。
 func parseItems(content string, items []*model.Item, needDetail bool) (map[int64]Result, map[int64]error, error) {
-	js, err := extractJSON(content)
-	if err != nil {
-		return nil, nil, err
-	}
 	var out struct {
 		Items []rawResult `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(js), &out); err != nil {
-		return nil, nil, fmt.Errorf("AI 返回的 JSON 无法解析：%w", err)
+	js := ""
+	if arr, ok := extractArray(content); ok {
+		out.Items = arr
+	} else {
+		var err error
+		if js, err = extractJSON(content); err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal([]byte(js), &out); err != nil {
+			return nil, nil, fmt.Errorf("AI 返回的 JSON 无法解析：%w", err)
+		}
 	}
-	if len(out.Items) == 0 {
+	if len(out.Items) == 0 && js != "" {
 		var single rawResult
 		if json.Unmarshal([]byte(js), &single) == nil && single.ID != "" {
 			out.Items = []rawResult{single}

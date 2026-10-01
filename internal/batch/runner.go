@@ -399,18 +399,19 @@ func (ru *run) call(level model.Level, items []*model.Item, pitems []promptItem,
 	for attempt := 1; attempt <= 2; attempt++ {
 		resp, err := lc.ch.Chat(ru.ctx, req)
 		if err != nil {
-			// 被取消不是服务商的问题：不停用档位、不记失败；已花掉的 token 照样记到条目上。
-			if !ru.cancelled() && !errors.Is(err, context.Canceled) {
-				ru.stop(level, fmt.Sprintf("%s档调用失败，本次不再调用：%v", levelName(level), err))
-				ru.rep.Waiting += len(items)
-			}
-			ru.saveTokens(items, shares)
+			ru.callFailed(level, items, pitems, images, shares, err)
 			return
 		}
 		ru.record(level, lc, resp.Usage, est, items, shares)
+		if resp.FinishReason == "length" {
+			ru.r.log().Warn("AI 输出被截断（到了 max_tokens 上限）", "level", level, "attempt", attempt, "items", len(items))
+		}
 		results, errs, lastErr = parseItems(resp.Content, items, level != model.LevelLight)
 		if lastErr == nil {
 			break
+		}
+		if resp.FinishReason == "length" {
+			lastErr = fmt.Errorf("%w（输出被截断）", lastErr)
 		}
 		ru.r.log().Warn("AI 返回的格式不对", "level", level, "attempt", attempt, "err", lastErr)
 		if attempt == 2 || ru.cancelled() {
@@ -439,6 +440,73 @@ func (ru *run) call(level model.Level, items []*model.Item, pitems []promptItem,
 			err = lastErr
 		}
 		ru.fail(it, err, shares[it.ID])
+	}
+}
+
+// errKind 是调用出错时的处理方式。
+type errKind int
+
+const (
+	errCancelled errKind = iota // 整理被取消：不停用档位、不记失败
+	errProvider                 // 服务商不可用（密钥、余额、限流、5xx、网络）：停用整档，不记失败
+	errRequest                  // 这次请求本身被拒（内容审核、图片不支持、请求过大）：只怪这几条
+	errTimeout                  // 单次请求超时：只怪这几条
+)
+
+func (ru *run) classify(err error) errKind {
+	if ru.cancelled() || errors.Is(err, context.Canceled) {
+		return errCancelled
+	}
+	var he *llm.HTTPError
+	if errors.As(err, &he) {
+		switch he.Status {
+		case 400, 413, 422:
+			return errRequest
+		}
+		return errProvider
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errTimeout
+	}
+	return errProvider
+}
+
+// callFailed 处理 Chat 返回的错误。已花掉的 token（格式重试前那次）照样记到条目上。
+//   - 400/413/422（如 DeepSeek 对敏感内容的 Content Exists Risk、对不支持图片的模型发图）：
+//     多条一包时拆成逐条重发，找出是哪一条；单条时给这一条记一次失败，3 次后退出队列。
+//   - 单条请求超时：记一次失败，不停用整档。多条一包超时仍按服务商不可用处理，避免拆开后每条再等一轮超时。
+//   - 其余（401/402/403/404/429/5xx、网络错误）：停用整档、不记失败，下次再试。
+func (ru *run) callFailed(level model.Level, items []*model.Item, pitems []promptItem, images []string, shares map[int64]int64, err error) {
+	kind := ru.classify(err)
+	if kind == errTimeout && len(items) > 1 {
+		kind = errProvider
+	}
+	switch kind {
+	case errCancelled:
+		ru.saveTokens(items, shares)
+	case errRequest, errTimeout:
+		if len(items) == 1 {
+			ru.r.log().Warn("AI 拒绝或超时，这一条记一次失败", "level", level, "item", items[0].ID, "err", err)
+			ru.fail(items[0], err, shares[items[0].ID])
+			return
+		}
+		ru.r.log().Warn("AI 拒绝了整包请求，拆成逐条重发", "level", level, "items", len(items), "err", err)
+		ru.saveTokens(items, shares)
+		for i, it := range items {
+			if ru.cancelled() {
+				return
+			}
+			one := []promptItem{pitems[i]}
+			if !ru.fits(Estimate(ru.request(level, one, images, ""))) {
+				ru.rep.Queued++
+				continue
+			}
+			ru.call(level, []*model.Item{it}, one, images)
+		}
+	default:
+		ru.stop(level, fmt.Sprintf("%s档调用失败，本次不再调用：%v", levelName(level), err))
+		ru.rep.Waiting += len(items)
+		ru.saveTokens(items, shares)
 	}
 }
 
@@ -503,13 +571,18 @@ func (ru *run) applyOne(snap *model.Item, res Result, level model.Level, tokens 
 	ru.rep.Processed++
 }
 
+// fail 给条目记一次失败。写库失败（条目已被删除等）时不计入报告的失败数，modify 已记日志。
 func (ru *run) fail(snap *model.Item, err error, tokens int64) {
-	ru.modify(snap.ID, func(cur *model.Item) error {
+	ok := ru.modify(snap.ID, func(cur *model.Item) error {
 		cur.ProcessAttempts++
 		cur.ProcessError = model.TruncateRunes(err.Error(), 300)
 		cur.TokensUsed += tokens
 		return nil
 	})
+	if !ok {
+		ru.r.log().Warn("记录整理失败没写进去，不计入失败数", "item", snap.ID, "err", err)
+		return
+	}
 	ru.rep.Failed++
 }
 

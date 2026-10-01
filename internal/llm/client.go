@@ -63,6 +63,8 @@ func (u Usage) Total() int64 { return u.PromptTokens + u.CompletionTokens }
 type Response struct {
 	Content string
 	Usage   Usage
+	// FinishReason 是服务商给的结束原因；"length" 表示输出到了 max_tokens 被截断。
+	FinishReason string
 }
 
 type Chatter interface {
@@ -96,11 +98,14 @@ func (c *Client) wrap(err error) error {
 	return &maskedError{msg: c.mask(err.Error()), err: err}
 }
 
+// DefaultTimeout 是单次请求的上限。深度档要读两万字正文、推理模型还要先想一阵，留足 5 分钟。
+const DefaultTimeout = 300 * time.Second
+
 func New(baseURL, apiKey string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{}
 	}
-	return &Client{BaseURL: baseURL, HTTP: hc, Timeout: 180 * time.Second, apiKey: strings.TrimSpace(apiKey)}
+	return &Client{BaseURL: baseURL, HTTP: hc, Timeout: DefaultTimeout, apiKey: strings.TrimSpace(apiKey)}
 }
 
 var versionSuffix = regexp.MustCompile(`/v\d+$`)
@@ -173,6 +178,7 @@ func (c *Client) Chat(ctx context.Context, req Request) (Response, error) {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage Usage `json:"usage"`
 		Error *struct {
@@ -188,7 +194,7 @@ func (c *Client) Chat(ctx context.Context, req Request) (Response, error) {
 		}
 		return Response{}, errors.New("llm: 响应里没有 choices")
 	}
-	return Response{Content: out.Choices[0].Message.Content, Usage: out.Usage}, nil
+	return Response{Content: out.Choices[0].Message.Content, Usage: out.Usage, FinishReason: out.Choices[0].FinishReason}, nil
 }
 
 // Models 拉取服务商的模型列表，按名称排序。

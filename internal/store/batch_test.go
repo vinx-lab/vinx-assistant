@@ -58,6 +58,18 @@ func TestPendingForBatch(t *testing.T) {
 	add("e", model.CatInbox, model.LevelLight, "", "", 3)                   // 次数用完
 	add("f", model.CatTodo, model.LevelLight, "", model.StatusCancelled, 0) // 已取消
 	add("g", model.CatResearch, model.LevelMedium, model.LevelDeep, "", 0)  // 已处理得更深
+	// 手动设回收件箱、且已处理到要求深度的：不反复整理。
+	manual := &model.Item{MsgID: "h", Category: model.CatInbox, CategoryBy: model.ByManual, Level: model.LevelLight, ProcessedLevel: model.LevelLight}
+	if _, err := st.InsertItem(ctx, manual); err != nil {
+		t.Fatal(err)
+	}
+	// 手动设回收件箱、但还没处理过的：照常按深度整理。
+	m2 := &model.Item{MsgID: "i", Category: model.CatInbox, CategoryBy: model.ByManual, Level: model.LevelLight}
+	id2, err := st.InsertItem(ctx, m2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, id2)
 	got, err := st.PendingForBatch(ctx, 3)
 	if err != nil {
 		t.Fatal(err)

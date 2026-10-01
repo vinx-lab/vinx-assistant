@@ -17,6 +17,7 @@ type Reply struct {
 	Raw              string
 	PromptTokens     int64
 	CompletionTokens int64
+	FinishReason     string // 空时按 "stop"
 }
 
 // JSON 把 v 编码成 AI 的回答内容，用量记为 100/50。
@@ -112,8 +113,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, rep.Raw)
 		return
 	}
+	finish := rep.FinishReason
+	if finish == "" {
+		finish = "stop"
+	}
 	json.NewEncoder(w).Encode(map[string]any{
-		"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": rep.Content}}},
+		"choices": []any{map[string]any{"message": map[string]string{"role": "assistant", "content": rep.Content}, "finish_reason": finish}},
 		"usage":   map[string]int64{"prompt_tokens": rep.PromptTokens, "completion_tokens": rep.CompletionTokens},
 	})
 }
