@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,6 +118,11 @@ func (s *Server) itemPage(w http.ResponseWriter, r *http.Request) {
 	s.renderItem(w, r, http.StatusOK, it, formOf(it), "")
 }
 
+// staleMsg 是条目在打开页面之后被别处（批处理、微信指令）改过时拒绝保存的提示。
+const staleMsg = "条目已被更新，请刷新后再改"
+
+var errStale = errors.New("web: item changed since page load")
+
 func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 	id, ok := s.itemID(w, r)
 	if !ok {
@@ -124,8 +130,13 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 	}
 	f := editForm{Category: r.FormValue("category"), Tags: r.FormValue("tags"), DueDate: r.FormValue("due_date"),
 		DueTime: r.FormValue("due_time"), Priority: r.FormValue("priority")}
+	// 表单带着打开页面时条目的 updated_at；对不上（或缺失）说明期间被改过，整表提交会覆盖那些改动，拒绝
+	seen, perr := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)
 	var tags []string
 	_, err := s.d.Store.ModifyItem(r.Context(), id, func(it *model.Item) error {
+		if perr != nil || it.UpdatedAt.Unix() != seen {
+			return errStale
+		}
 		var err error
 		tags, err = applyEdit(it, f)
 		return err
@@ -134,6 +145,11 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		http.NotFound(w, r)
+		return
+	case errors.Is(err, errStale):
+		if cur, ok := s.loadItem(w, r); ok {
+			s.renderItem(w, r, http.StatusConflict, cur, formOf(cur), staleMsg) // 表单换成最新值，避免照原样再提交又覆盖
+		}
 		return
 	case errors.As(err, &bad):
 		orig, ok := s.loadItem(w, r)

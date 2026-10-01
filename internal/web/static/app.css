@@ -41,7 +41,7 @@ fieldset { border: 1px solid var(--line); border-radius: 8px; }
 .md img, .att img { max-width: 100%; height: auto; }
 .overdue { color: var(--warn); font-weight: 600; }
 .empty { color: var(--muted); }
-.bar { display: grid; grid-template-columns: 92px 1fr 72px; gap: 8px; align-items: center; font-size: 14px; }
+.bar { display: grid; grid-template-columns: 92px 1fr auto; gap: 8px; align-items: center; font-size: 14px; }
 .track { background: var(--card); border-radius: 4px; height: 12px; overflow: hidden; }
 .fill { display: block; height: 100%; background: var(--accent); }
 .num { text-align: right; }

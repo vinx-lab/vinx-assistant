@@ -1,9 +1,9 @@
 {{define "content"}}
-<p class="status"><span class="pill">今日已用 {{.Today}}{{if .Limit}} / 上限 {{.Limit}}{{else}}（不限）{{end}}</span></p>
+<p class="status"><span class="pill">今日整理已用 {{.Today}}{{if .Limit}} / 上限 {{.Limit}}{{else}}（不限）{{end}}</span> <span class="pill">今日指令 {{.TodayCommand}}（不计入上限）</span></p>
 <section>
   <h2>最近 30 天</h2>
   {{range .Days}}
-  <div class="bar"><span class="day">{{.Day}}</span><span class="track"><span class="fill w{{pct .Total $.Max}}"></span></span><span class="num">{{.Total}}</span></div>
+  <div class="bar"><span class="day">{{.Day}}</span><span class="track"><span class="fill w{{pct .Total $.Max}}"></span></span><span class="num">整理 {{.Organize}} + 指令 {{.Command}} = {{.Total}}</span></div>
   {{else}}<p class="empty">还没有 AI 调用记录。</p>{{end}}
 </section>
 <section>

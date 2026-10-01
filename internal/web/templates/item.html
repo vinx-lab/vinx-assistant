@@ -30,6 +30,7 @@
 <section>
   <h3>修改</h3>
   <form method="post" action="/items/{{.Item.ID}}" class="stack">
+    <input type="hidden" name="updated_at" value="{{.Item.UpdatedAt.Unix}}">
     <label>分类
       <select name="category">{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Form.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select>
     </label>
