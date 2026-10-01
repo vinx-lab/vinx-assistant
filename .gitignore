@@ -1,0 +1,11 @@
+/dist/
+# 运行时数据目录
+/data/
+*.db
+*.db-wal
+*.db-shm
+# 本机私有：Makefile 的 Go 环境
+local.mk
+# 开发过程记录（计划、探针报告等），本地保留
+/docs/superpowers/
+.superpowers/
