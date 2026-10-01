@@ -1,0 +1,171 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/vinx-lab/vinx-assistant/internal/model"
+)
+
+const itemCols = `id, created_at, updated_at, msg_id, raw_text, url, link_title, link_desc, category, category_by, level, status, title, summary, detail, priority, due_at, due_has_time, processed_level, process_error, process_attempts, tokens_used, raw_json`
+
+type scanner interface{ Scan(dest ...any) error }
+
+func scanItem(sc scanner) (*model.Item, error) {
+	var (
+		it               model.Item
+		created, updated int64
+		due              sql.NullInt64
+		hasTime          int
+		cat, by, lvl     string
+		prio, plvl       string
+	)
+	err := sc.Scan(&it.ID, &created, &updated, &it.MsgID, &it.RawText, &it.URL, &it.LinkTitle, &it.LinkDesc,
+		&cat, &by, &lvl, &it.Status, &it.Title, &it.Summary, &it.Detail, &prio, &due, &hasTime,
+		&plvl, &it.ProcessError, &it.ProcessAttempts, &it.TokensUsed, &it.RawJSON)
+	if err != nil {
+		return nil, err
+	}
+	it.CreatedAt, it.UpdatedAt = fromUnix(created), fromUnix(updated)
+	it.Category, it.CategoryBy, it.Level = model.Category(cat), model.CategoryBy(by), model.Level(lvl)
+	it.Priority, it.ProcessedLevel = model.Priority(prio), model.Level(plvl)
+	if due.Valid {
+		t := fromUnix(due.Int64)
+		it.DueAt = &t
+	}
+	it.DueHasTime = hasTime == 1
+	return &it, nil
+}
+
+func loadTags(ctx context.Context, q querier, itemID int64) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT t.name FROM item_tags x JOIN tags t ON t.id = x.tag_id WHERE x.item_id = ? ORDER BY t.name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		tags = append(tags, n)
+	}
+	return tags, rows.Err()
+}
+
+func fillDefaults(it *model.Item) {
+	if it.Category == "" {
+		it.Category = model.CatInbox
+	}
+	if it.CategoryBy == "" {
+		it.CategoryBy = model.ByAI
+	}
+	if it.Level == "" {
+		it.Level = model.LevelLight
+	}
+	if it.Status == "" {
+		it.Status = model.DefaultStatus(it.Category)
+	}
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// InsertItem 新建条目并设置 it.ID。msg_id 已存在时返回 ErrDuplicate。
+func (s *Store) InsertItem(ctx context.Context, it *model.Item) (int64, error) {
+	now := s.now()
+	if it.CreatedAt.IsZero() {
+		it.CreatedAt = now
+	}
+	it.UpdatedAt = now
+	fillDefaults(it)
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO items (created_at, updated_at, msg_id, raw_text, url, link_title, link_desc,
+			category, category_by, level, status, title, summary, detail, priority, due_at, due_has_time,
+			processed_level, process_error, process_attempts, tokens_used, raw_json)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(msg_id) DO NOTHING`,
+			it.CreatedAt.Unix(), it.UpdatedAt.Unix(), it.MsgID, it.RawText, it.URL, it.LinkTitle, it.LinkDesc,
+			it.Category, it.CategoryBy, it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority,
+			unixOrNil(it.DueAt), b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts,
+			it.TokensUsed, it.RawJSON)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrDuplicate
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		it.ID = id
+		return s.Reindex(ctx, tx, id)
+	})
+	return it.ID, err
+}
+
+func (s *Store) GetItem(ctx context.Context, id int64) (*model.Item, error) {
+	it, err := scanItem(s.db.QueryRowContext(ctx, `SELECT `+itemCols+` FROM items WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	it.Tags, err = loadTags(ctx, s.db, id)
+	return it, err
+}
+
+// UpdateItem 写回全部可变列（不含 created_at、msg_id、raw_json），并重建全文索引。
+func (s *Store) UpdateItem(ctx context.Context, it *model.Item) error {
+	it.UpdatedAt = s.now()
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE items SET updated_at=?, raw_text=?, url=?, link_title=?, link_desc=?,
+			category=?, category_by=?, level=?, status=?, title=?, summary=?, detail=?, priority=?, due_at=?,
+			due_has_time=?, processed_level=?, process_error=?, process_attempts=?, tokens_used=? WHERE id=?`,
+			it.UpdatedAt.Unix(), it.RawText, it.URL, it.LinkTitle, it.LinkDesc, it.Category, it.CategoryBy,
+			it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
+			b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts, it.TokensUsed, it.ID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return s.Reindex(ctx, tx, it.ID)
+	})
+}
+
+// SetLink 由轻处理写入链接和网页标题、简介。
+func (s *Store) SetLink(ctx context.Context, id int64, url, title, desc string) error {
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE items SET url=?, link_title=?, link_desc=?, updated_at=? WHERE id=?`, url, title, desc, s.now().Unix(), id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return s.Reindex(ctx, tx, id)
+	})
+}
+
+// Reindex 重建一个条目的全文索引行。改了标题、摘要、标签等之后都要在同一事务里调用。
+func (s *Store) Reindex(ctx context.Context, tx *sql.Tx, id int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM items_fts WHERE rowid = ?`, id); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO items_fts (rowid, title, raw_text, summary, detail, tags, link_title)
+		SELECT i.id, i.title, i.raw_text, i.summary, i.detail,
+		       COALESCE((SELECT group_concat(t.name, ' ') FROM item_tags x JOIN tags t ON t.id = x.tag_id WHERE x.item_id = i.id), ''),
+		       i.link_title
+		FROM items i WHERE i.id = ?`, id)
+	return err
+}
