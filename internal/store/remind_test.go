@@ -111,14 +111,6 @@ func TestOpenTodosOrder(t *testing.T) {
 	}
 }
 
-func ids(items []model.Item) []int64 {
-	var out []int64
-	for _, it := range items {
-		out = append(out, it.ID)
-	}
-	return out
-}
-
 func TestDigestData(t *testing.T) {
 	st, fc := openTest(t) // 2026-10-01 09:00
 	ctx := context.Background()
