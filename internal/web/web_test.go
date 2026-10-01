@@ -242,3 +242,38 @@ func TestStartPanicResetsRunning(t *testing.T) {
 		t.Fatalf("running stuck: NewLogin calls=%d", calls)
 	}
 }
+
+func TestReferrerPolicySameOrigin(t *testing.T) {
+	e := newEnv(t)
+	resp, err := e.client().Get(e.srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q", got)
+	}
+}
+
+// 非安全源（http 局域网）的浏览器不带 Sec-Fetch-Site，只靠 Origin 判断同源。
+// no-referrer 策略会让浏览器把表单 POST 的 Origin 写成 null 而被拒，所以策略必须是 same-origin。
+func TestSameOriginPostWithoutFetchSite(t *testing.T) {
+	e := newEnv(t)
+	e.item(t, &model.Item{MsgID: "1", RawText: "x", Category: model.CatTodo})
+	for origin, want := range map[string]int{
+		e.srv.URL: http.StatusSeeOther,
+		"null":    http.StatusForbidden,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/items/1/deep", strings.NewReader("now=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", origin)
+		resp, err := e.client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("Origin %q: code %d, want %d", origin, resp.StatusCode, want)
+		}
+	}
+}

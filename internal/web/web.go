@@ -109,12 +109,13 @@ func (s *Server) Routes(mux *http.ServeMux) {
 }
 
 // secure 先检查 Host 头（防 DNS rebinding），再给所有响应加上安全头：脚本、样式只能来自本站，页面不能被嵌进别的网站。
+// Referrer-Policy 必须是 same-origin 而不是 no-referrer：no-referrer 下浏览器提交表单会把 Origin 写成 null，http 局域网（非安全源）又不带 Sec-Fetch-Site，会被跨站防护拒绝。
 func (s *Server) secure(h http.Handler) http.Handler {
 	return s.hosts.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("X-Frame-Options", "DENY")
-		hd.Set("Referrer-Policy", "no-referrer")
+		hd.Set("Referrer-Policy", "same-origin")
 		hd.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		h.ServeHTTP(w, r)
 	}), s)
