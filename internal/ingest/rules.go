@@ -2,10 +2,8 @@
 package ingest
 
 import (
-	"sort"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
@@ -20,34 +18,49 @@ type Parsed struct {
 	Category   model.Category
 	CategoryBy model.CategoryBy
 	Level      model.Level
-	Text       string // 去掉前缀后的文本
+	Text       string // 关键词在开头时去掉关键词后的文本，否则是原文
 }
 
 func isSep(r rune) bool {
 	return r == ':' || r == '：' || r == ',' || r == '，' || unicode.IsSpace(r)
 }
 
-func matchPrefix(text string, prefixes []model.PrefixRule) (model.Category, string, bool) {
-	sorted := append([]model.PrefixRule(nil), prefixes...)
-	sort.SliceStable(sorted, func(i, j int) bool { return len(sorted[i].Prefix) > len(sorted[j].Prefix) })
-	for _, p := range sorted {
-		if p.Prefix == "" || !model.ValidCategory(p.Category) || !strings.HasPrefix(text, p.Prefix) {
+// matchKeyword 在文本里找分类关键词，出现在任何位置都算，不要求分隔符。
+//  1. 取所有合法关键词（非空、分类合法）的最早出现位置；同位置多个命中取更长的（「待研究」优先于「研究」）。
+//  2. 命中在开头：去掉关键词和紧随其后的分隔符，剩下的作为正文；去掉后为空则保留原文。
+//  3. 命中不在开头：正文保持原文。
+func matchKeyword(text string, prefixes []model.PrefixRule) (model.Category, string, bool) {
+	best, bestPos := -1, 0
+	for i, p := range prefixes {
+		if p.Prefix == "" || !model.ValidCategory(p.Category) {
 			continue
 		}
-		rest := text[len(p.Prefix):]
-		r, _ := utf8.DecodeRuneInString(rest)
-		if rest == "" || !isSep(r) {
+		pos := strings.Index(text, p.Prefix)
+		if pos < 0 {
 			continue
 		}
-		return p.Category, strings.TrimSpace(strings.TrimLeftFunc(rest, isSep)), true
+		if best < 0 || pos < bestPos || (pos == bestPos && len(p.Prefix) > len(prefixes[best].Prefix)) {
+			best, bestPos = i, pos
+		}
 	}
-	return "", "", false
+	if best < 0 {
+		return "", "", false
+	}
+	cat := prefixes[best].Category
+	if bestPos != 0 {
+		return cat, text, true
+	}
+	rest := strings.TrimSpace(strings.TrimLeftFunc(text[len(prefixes[best].Prefix):], isSep))
+	if rest == "" {
+		rest = text
+	}
+	return cat, rest, true
 }
 
 func Classify(in Input, rules model.Rules, aiImages bool) Parsed {
 	text := strings.TrimSpace(in.Text)
 	p := Parsed{Category: model.CatInbox, CategoryBy: model.ByAI, Level: model.LevelLight, Text: text}
-	if cat, rest, ok := matchPrefix(text, rules.Prefixes); ok {
+	if cat, rest, ok := matchKeyword(text, rules.Prefixes); ok {
 		p.Category, p.CategoryBy, p.Text = cat, model.ByPrefix, rest
 	} else if text == "" && in.HasImage && !aiImages {
 		p.Category, p.CategoryBy = model.CatArchive, model.ByPrefix

@@ -1,5 +1,6 @@
 package model
 
+// PrefixRule 是分类关键词，出现在消息任何位置都算（JSON 字段名沿用 prefixes，兼容已存的设置）。
 type PrefixRule struct {
 	Prefix   string   `json:"prefix"`
 	Category Category `json:"category"`
@@ -73,7 +74,7 @@ func DefaultSettings() Settings {
 		Rules: Rules{
 			Prefixes: []PrefixRule{
 				{"待研究", CatResearch}, {"研究", CatResearch}, {"稍后看", CatLater},
-				{"待办", CatTodo}, {"点子", CatIdea}, {"资料", CatArchive},
+				{"待办", CatTodo}, {"代办", CatTodo}, {"点子", CatIdea}, {"想法", CatIdea}, {"资料", CatArchive},
 			},
 			MediumKeywords: []string{"研究一下"},
 			DeepKeywords:   []string{"深入研究"},

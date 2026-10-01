@@ -38,7 +38,7 @@ func ValidCategory(c Category) bool { _, ok := categoryNames[c]; return ok }
 type CategoryBy string
 
 const (
-	ByPrefix CategoryBy = "prefix"
+	ByPrefix CategoryBy = "prefix" // 规则关键词命中（历史名称，数据库 CHECK 只允许 prefix/ai/manual）
 	ByAI     CategoryBy = "ai"
 	ByManual CategoryBy = "manual"
 )
