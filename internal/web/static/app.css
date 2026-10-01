@@ -4,6 +4,7 @@
   :root { --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --card: #161b22; --line: #30363d; --accent: #4493f8; --warn: #db61a2; --ok: #3fb950; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; font: 16px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--fg); background: var(--bg); }
 a { color: var(--accent); }
 .top { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); }

@@ -74,6 +74,24 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 	m.running = true
 	m.mu.Unlock()
 
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		rec := recover()
+		m.mu.Lock()
+		m.running = false
+		if rec != nil {
+			m.qr = ilink.QR{}
+			m.status = LoginStatus{State: "failed", Message: "获取二维码失败，请重试。"}
+		}
+		m.mu.Unlock()
+		if rec != nil {
+			s.d.Log.Error("扫码登录启动异常", "panic", rec)
+			redirect(w, r, "/login")
+		}
+	}()
 	l := s.d.NewLogin()
 	qr, err := l.Start(r.Context(), s.d.Session.TokenHistory(r.Context()))
 	if err != nil {
@@ -83,6 +101,7 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 		m.qr = ilink.QR{}
 		m.status = LoginStatus{State: "failed", Message: "获取二维码失败：" + err.Error()}
 		m.mu.Unlock()
+		started = true
 		redirect(w, r, "/login")
 		return
 	}
@@ -91,11 +110,16 @@ func (s *Server) loginStart(w http.ResponseWriter, r *http.Request) {
 	m.status = LoginStatus{State: "waiting", Message: "请用微信扫码"}
 	verifyCh := m.verifyCh
 	m.mu.Unlock()
+	started = true
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 		defer cancel()
 		verify := func(ctx context.Context) (string, error) {
+			select { // 丢掉等待之前误提交的旧验证码
+			case <-verifyCh:
+			default:
+			}
 			m.set("need_verify", loginStateText["need_verifycode"])
 			select {
 			case code := <-verifyCh:

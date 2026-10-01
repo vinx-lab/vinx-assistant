@@ -41,6 +41,6 @@
       document.getElementById('login-qr').hidden = !s.has_qr;
       document.getElementById('login-verify').hidden = s.state !== 'need_verify';
       if (active.indexOf(s.state) < 0) { clearInterval(timer); location.reload(); }
-    });
+    }).catch(function () { /* 忽略，定时器继续 */ });
   }, 2000);
 })();

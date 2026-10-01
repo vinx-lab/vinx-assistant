@@ -174,3 +174,36 @@ func TestStaticServed(t *testing.T) {
 		t.Fatalf("js %d", code)
 	}
 }
+
+func TestHiddenRuleBeatsInlineDisplay(t *testing.T) {
+	e := newEnv(t)
+	_, body := e.get(t, "/static/app.css")
+	mustContain(t, body, "[hidden] { display: none !important; }")
+}
+
+func TestStartPanicResetsRunning(t *testing.T) {
+	e := newEnv(t)
+	calls := 0
+	s := New(Deps{Store: e.st, Session: e.sess, Clock: e.clk, NewLogin: func() *ilink.Login {
+		calls++
+		if calls == 1 {
+			panic("boom")
+		}
+		l := ilink.NewLogin(nil)
+		l.BaseURL, l.PollDelay = e.ilink.URL, time.Millisecond
+		return l
+	}})
+	mux := http.NewServeMux()
+	s.Routes(mux)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/login/start", nil)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+		if i == 0 && s.login.get().State != "failed" {
+			t.Fatalf("state %+v", s.login.get())
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("running stuck: NewLogin calls=%d", calls)
+	}
+}
