@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
 
 type Action struct {
@@ -69,4 +71,75 @@ func (s *Store) ActionByMsgID(ctx context.Context, msgID string) (*Action, error
 func (s *Store) MarkUndone(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE actions SET undone = 1 WHERE id = ?`, id)
 	return err
+}
+
+func insertActionTx(ctx context.Context, tx *sql.Tx, a *Action, undone bool, now time.Time) error {
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = now
+	}
+	var item any
+	if a.ItemID != 0 {
+		item = a.ItemID
+	}
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO actions (msg_id, command, item_id, before, after, undone, created_at) VALUES (?,?,?,?,?,?,?)`,
+		a.MsgID, a.Command, item, a.Before, a.After, b2i(undone), a.CreatedAt.Unix())
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDuplicate
+	}
+	a.ID, err = res.LastInsertId()
+	return err
+}
+
+// ModifyItemWithAction 在同一事务里改条目并记录指令。fn 返回 nil action 表示无改动（整体回滚，
+// 返回 fn 的错误，通常是哨兵）；action.MsgID 已存在则整体回滚并返回 ErrDuplicate。
+// action.ItemID 由本方法填成 id。
+func (s *Store) ModifyItemWithAction(ctx context.Context, id int64, fn func(it *model.Item) (*Action, error)) (*model.Item, error) {
+	var out *model.Item
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		var act *Action
+		it, err := s.modifyTx(ctx, tx, id, func(it *model.Item) error {
+			var err error
+			act, err = fn(it)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		act.ItemID = id
+		out = it
+		return insertActionTx(ctx, tx, act, false, s.now())
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UndoAction 在同一事务里撤销 a：fn 把条目恢复到快照；a 标为已撤销；再记一条
+// {msgID, "撤销", before=a.After, after=a.Before, undone=1} 用于重放去重（undone=1 使 LastAction 跳过它）。
+// 条目不存在返回 ErrNotFound（整体回滚），重复 msg_id 返回 ErrDuplicate。
+func (s *Store) UndoAction(ctx context.Context, a *Action, msgID string, fn func(it *model.Item) error) (*model.Item, error) {
+	var out *model.Item
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		it, err := s.modifyTx(ctx, tx, a.ItemID, fn)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE actions SET undone = 1 WHERE id = ?`, a.ID); err != nil {
+			return err
+		}
+		rec := &Action{MsgID: msgID, Command: "撤销", ItemID: a.ItemID, Before: a.After, After: a.Before}
+		if err := insertActionTx(ctx, tx, rec, true, s.now()); err != nil {
+			return err
+		}
+		out = it
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

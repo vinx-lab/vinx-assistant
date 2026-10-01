@@ -42,7 +42,7 @@ func (h *Handler) Handle(ctx context.Context, in ingest.CommandInput) (string, b
 		// 重放（进程在 MarkSeen 前崩溃）：同一 msg_id 已执行过就只回显，不再执行
 		prev, err := h.Store.ActionByMsgID(ctx, in.MsgID)
 		if err == nil {
-			return fmt.Sprintf("这条指令已处理过：%s（#%d）。", prev.Command, prev.ItemID), true, nil
+			return h.replayReply(ctx, prev), true, nil
 		}
 		if !errors.Is(err, store.ErrNotFound) {
 			return "", false, err
@@ -169,39 +169,59 @@ func (h *Handler) run(ctx context.Context, c Cmd, in ingest.CommandInput, now ti
 		reply, err := h.list(ctx, now)
 		return reply, true, err
 	case OpUndo:
-		reply, err := h.undo(ctx)
+		reply, err := h.undo(ctx, in.MsgID)
 		return reply, true, err
 	}
 	var (
 		reply         string
 		before, after Snapshot
 	)
-	// ModifyItem 在事务里读-改-写；无改动时返回哨兵错误回滚，不写库
-	_, err := h.Store.ModifyItem(ctx, c.ID, func(it *model.Item) error {
+	// 改条目与记录指令在同一事务；无改动时 fn 返回哨兵错误整体回滚
+	_, err := h.Store.ModifyItemWithAction(ctx, c.ID, func(it *model.Item) (*store.Action, error) {
 		before = SnapshotOf(it)
 		r, changed := Apply(it, c, now)
 		reply = r
 		if !changed {
-			return errNoChange
+			return nil, errNoChange
 		}
 		after = SnapshotOf(it)
-		return nil
+		b, _ := json.Marshal(before)
+		a, _ := json.Marshal(after)
+		return &store.Action{MsgID: in.MsgID, Command: strings.TrimSpace(in.Text), Before: string(b), After: string(a)}, nil
 	})
 	switch {
 	case errors.Is(err, errNoChange):
 		return reply, true, nil
 	case errors.Is(err, store.ErrNotFound):
 		return fmt.Sprintf("没有 #%d。", c.ID), true, nil
+	case errors.Is(err, store.ErrDuplicate):
+		prev, perr := h.Store.ActionByMsgID(ctx, in.MsgID)
+		if perr != nil {
+			return "", true, perr
+		}
+		return h.replayReply(ctx, prev), true, nil
 	case err != nil:
 		return "", true, err
 	}
-	b, _ := json.Marshal(before)
-	a, _ := json.Marshal(after)
-	err = h.Store.InsertAction(ctx, &store.Action{MsgID: in.MsgID, Command: strings.TrimSpace(in.Text), ItemID: c.ID, Before: string(b), After: string(a)})
-	if err != nil && !errors.Is(err, store.ErrDuplicate) {
-		return "", true, err
-	}
 	return reply, true, nil
+}
+
+// replayReply 用已有的指令记录和条目现状拼出回显，不再执行。
+func (h *Handler) replayReply(ctx context.Context, prev *store.Action) string {
+	const head = "这条指令已处理过"
+	if prev.ItemID == 0 {
+		return head + "：" + prev.Command + "。"
+	}
+	it, err := h.Store.GetItem(ctx, prev.ItemID)
+	if err != nil {
+		return fmt.Sprintf("%s：%s（#%d）。", head, prev.Command, prev.ItemID)
+	}
+	now := h.Clock.Now()
+	desc := fmt.Sprintf("#%d %s 现为「%s」", it.ID, model.TruncateRunes(it.DisplayTitle(), 30), model.StatusName(it.Status))
+	if it.DueAt != nil {
+		desc += "，截止 " + model.FormatDue(*it.DueAt, it.DueHasTime, now)
+	}
+	return fmt.Sprintf("%s：%s → %s。", head, prev.Command, desc)
 }
 
 var errNoChange = errors.New("command: no change")
@@ -253,7 +273,9 @@ func (h *Handler) list(ctx context.Context, now time.Time) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-func (h *Handler) undo(ctx context.Context) (string, error) {
+var errCatChanged = errors.New("command: category changed")
+
+func (h *Handler) undo(ctx context.Context, msgID string) (string, error) {
 	a, err := h.Store.LastAction(ctx)
 	if errors.Is(err, store.ErrNotFound) {
 		return "没有可以撤销的操作。", nil
@@ -265,19 +287,31 @@ func (h *Handler) undo(ctx context.Context) (string, error) {
 	if err := json.Unmarshal([]byte(a.Before), &snap); err != nil {
 		return "", err
 	}
-	it, err := h.Store.ModifyItem(ctx, a.ItemID, func(it *model.Item) error {
+	it, err := h.Store.UndoAction(ctx, a, msgID, func(it *model.Item) error {
+		if !statusValid(it.Category, snap.Status) {
+			return errCatChanged
+		}
 		snap.ApplyTo(it)
 		return nil
 	})
-	if errors.Is(err, store.ErrNotFound) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		_ = h.Store.MarkUndone(ctx, a.ID)
 		return "原条目已不存在，无法撤销。", nil
-	}
-	if err != nil {
+	case errors.Is(err, errCatChanged):
+		return fmt.Sprintf("#%d 的分类已变，无法撤销。", a.ItemID), nil
+	case errors.Is(err, store.ErrDuplicate):
+		prev, perr := h.Store.ActionByMsgID(ctx, msgID)
+		if perr != nil {
+			return "", perr
+		}
+		return h.replayReply(ctx, prev), nil
+	case err != nil:
 		return "", err
 	}
-	if err := h.Store.MarkUndone(ctx, a.ID); err != nil {
-		return "", err
+	reply := fmt.Sprintf("↩ 已撤销「%s」：#%d 恢复为「%s」", a.Command, it.ID, model.StatusName(it.Status))
+	if it.DueAt != nil && (snap.DueAt != nil) {
+		reply += "，截止 " + model.FormatDue(*it.DueAt, it.DueHasTime, h.Clock.Now())
 	}
-	return fmt.Sprintf("↩ 已撤销「%s」：#%d 恢复为「%s」", a.Command, it.ID, model.StatusName(it.Status)), nil
+	return reply, nil
 }

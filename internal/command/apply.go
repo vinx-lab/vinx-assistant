@@ -118,3 +118,19 @@ func Apply(it *model.Item, c Cmd, now time.Time) (string, bool) {
 	}
 	return "没看懂这条指令。" + Usage, false
 }
+
+var validStatus = map[model.Category][]string{
+	model.CatTodo:     {model.StatusOpen, model.StatusDone, model.StatusCancelled},
+	model.CatResearch: {model.StatusNew, model.StatusDoing, model.StatusDone, model.StatusDropped},
+	model.CatLater:    {model.StatusNew, model.StatusRead},
+}
+
+// statusValid 报告 status 是否仍是该分类下的合法状态（撤销前校验，分类变过则不写）。
+func statusValid(c model.Category, status string) bool {
+	for _, s := range validStatus[c] {
+		if s == status {
+			return true
+		}
+	}
+	return false
+}

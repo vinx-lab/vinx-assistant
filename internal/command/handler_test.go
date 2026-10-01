@@ -221,7 +221,7 @@ func TestReplayedMsgIDNotReExecuted(t *testing.T) {
 	}
 	it1, _ := st.GetItem(context.Background(), id)
 	r2, handled, err := h.Handle(context.Background(), in)
-	if err != nil || !handled || r2 == r1 || !strings.Contains(r2, "已处理过") {
+	if err != nil || !handled || r2 == r1 || !strings.Contains(r2, "已处理过") || !strings.Contains(r2, "#1 交材料") {
 		t.Fatalf("r2=%q handled=%v err=%v", r2, handled, err)
 	}
 	it2, _ := st.GetItem(context.Background(), id)
@@ -231,5 +231,70 @@ func TestReplayedMsgIDNotReExecuted(t *testing.T) {
 	a, err := st.ActionByMsgID(context.Background(), "dup1")
 	if err != nil || a.ItemID != id {
 		t.Fatalf("action = %+v err=%v", a, err)
+	}
+}
+
+func TestPreexistingActionBlocksExecution(t *testing.T) {
+	h, st, _ := newHandler(t, nil)
+	id := todo(t, st, "交发票", nil, false)
+	if err := st.InsertAction(context.Background(), &store.Action{MsgID: "pre", Command: "完成 1", ItemID: id, Before: "{}", After: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	reply, handled, err := h.Handle(context.Background(), ingest.CommandInput{Text: "完成 1", MsgID: "pre"})
+	if err != nil || !handled || !strings.Contains(reply, "已处理过") {
+		t.Fatalf("reply=%q err=%v", reply, err)
+	}
+	it, _ := st.GetItem(context.Background(), id)
+	if it.Status != model.StatusOpen {
+		t.Fatalf("item changed: %s", it.Status)
+	}
+}
+
+func TestUndoReplayOnlyOneStep(t *testing.T) {
+	h, st, _ := newHandler(t, nil)
+	a := todo(t, st, "a", nil, false)
+	b := todo(t, st, "b", nil, false)
+	handle(t, h, "完成 1", "")
+	handle(t, h, "完成 2", "")
+	in := ingest.CommandInput{Text: "撤销", MsgID: "undo1"}
+	r1, _, err := h.Handle(context.Background(), in)
+	if err != nil || !strings.Contains(r1, "已撤销") {
+		t.Fatalf("r1=%q err=%v", r1, err)
+	}
+	r2, _, err := h.Handle(context.Background(), in)
+	if err != nil || !strings.Contains(r2, "已处理过") {
+		t.Fatalf("r2=%q err=%v", r2, err)
+	}
+	ia, _ := st.GetItem(context.Background(), a)
+	ib, _ := st.GetItem(context.Background(), b)
+	if ia.Status != model.StatusDone || ib.Status != model.StatusOpen {
+		t.Fatalf("a=%s b=%s", ia.Status, ib.Status)
+	}
+	// 撤销记录自己不会被再次撤销：下一个新撤销作用于 a
+	if r, _ := handle(t, h, "撤销", ""); !strings.Contains(r, "#1") {
+		t.Fatalf("next undo = %q", r)
+	}
+}
+
+func TestUndoPostponeShowsDueAndCategoryChange(t *testing.T) {
+	h, st, _ := newHandler(t, nil)
+	due := clock.At(2026, 10, 1, 15, 0)
+	id := todo(t, st, "交材料", &due, true)
+	handle(t, h, "推迟 1 明天", "")
+	r, _ := handle(t, h, "撤销", "")
+	if !strings.Contains(r, "10-01 周四 15:00") {
+		t.Fatalf("undo reply = %q", r)
+	}
+	handle(t, h, "完成 1", "")
+	if _, err := st.ModifyItem(context.Background(), id, func(it *model.Item) error { it.Category = model.CatIdea; it.Status = model.StatusKept; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = handle(t, h, "撤销", "")
+	if r != "#1 的分类已变，无法撤销。" {
+		t.Fatalf("reply = %q", r)
+	}
+	it, _ := st.GetItem(context.Background(), id)
+	if it.Status != model.StatusKept {
+		t.Fatalf("status = %s", it.Status)
 	}
 }
