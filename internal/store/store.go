@@ -127,6 +127,23 @@ func (s *Store) SetKV(ctx context.Context, key, val string) error {
 	return err
 }
 
+// SetKVs 在一个事务里写入 set 中的键并删除 del 中的键，要么全成功要么全不变。
+func (s *Store) SetKVs(ctx context.Context, set map[string]string, del []string) error {
+	return s.Tx(ctx, func(tx *sql.Tx) error {
+		for k, v := range set {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, k, v); err != nil {
+				return err
+			}
+		}
+		for _, k := range del {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM kv WHERE key = ?`, k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Seen 表示这条微信消息已经处理过（条目或指令）。
 func (s *Store) Seen(ctx context.Context, msgID string) (bool, error) {
 	var n int

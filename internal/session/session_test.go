@@ -108,3 +108,63 @@ func TestRememberContext(t *testing.T) {
 		t.Fatalf("tok=%s at=%v ok=%v err=%v", tok, got, ok, err)
 	}
 }
+
+func TestSaveCredClearsStateOnAccountChange(t *testing.T) {
+	s, _ := newTest(t)
+	ctx := context.Background()
+	st := s.st
+	seed := func() {
+		st.SetKV(ctx, keyBuf, "cursor-1")
+		s.RememberContext(ctx, "ctx-1", clock.At(2026, 10, 1, 9, 0))
+	}
+	has := func(k string) bool { _, ok, _ := st.GetKV(ctx, k); return ok }
+
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t1", BotID: "bot1", UserID: "u1"})
+	seed()
+	// 同一 Bot 同一用户重新登录：保留游标和 context
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t2", BotID: "bot1", UserID: "u1"})
+	if !has(keyBuf) || !has(keyContext) {
+		t.Fatal("same bot re-login must keep buf and context")
+	}
+	// 换 Bot：清游标，用户没变保留 context
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t3", BotID: "bot2", UserID: "u1"})
+	if has(keyBuf) || !has(keyContext) {
+		t.Fatalf("bot changed: buf=%v context=%v", has(keyBuf), has(keyContext))
+	}
+	seed()
+	// 换用户：清 context 和时间，游标保留
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t4", BotID: "bot2", UserID: "u2"})
+	if !has(keyBuf) || has(keyContext) || has(keyContextAt) {
+		t.Fatalf("user changed: buf=%v context=%v at=%v", has(keyBuf), has(keyContext), has(keyContextAt))
+	}
+}
+
+func TestSaveCredRejectsEmptyTokenAndBadHistory(t *testing.T) {
+	s, _ := newTest(t)
+	ctx := context.Background()
+	if err := s.SaveCred(ctx, ilink.Cred{UserID: "u"}); err == nil {
+		t.Fatal("empty token accepted")
+	}
+	if _, ok, _ := s.Cred(ctx); ok {
+		t.Fatal("cred written despite error")
+	}
+	s.st.SetKV(ctx, keyTokens, "not json")
+	if err := s.SaveCred(ctx, ilink.Cred{BotToken: "t", UserID: "u"}); err == nil {
+		t.Fatal("corrupt history must be an error, not overwritten")
+	}
+	if v, _, _ := s.st.GetKV(ctx, keyTokens); v != "not json" {
+		t.Fatalf("history overwritten: %q", v)
+	}
+}
+
+func TestClientRebuiltWhenBaseURLChanges(t *testing.T) {
+	s, _ := newTest(t)
+	ctx := context.Background()
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t", UserID: "u", BaseURL: "http://a"})
+	c1, _ := s.Client(ctx)
+	s.SaveCred(ctx, ilink.Cred{BotToken: "t", UserID: "u", BaseURL: "http://b"})
+	c2, _ := s.Client(ctx)
+	if c1 == c2 || c2.BaseURL != "http://b" {
+		t.Fatalf("client not rebuilt: %v", c2)
+	}
+}

@@ -35,6 +35,7 @@ const (
 	keyTokens      = "ilink.token_history"
 	keyContext     = "ilink.context_token"
 	keyContextAt   = "ilink.context_token_at"
+	keyBuf         = "ilink.buf" // getupdates 游标，由 ingest.Poller 读写；换 Bot 时在这里清除
 )
 
 var (
@@ -49,7 +50,7 @@ type Session struct {
 
 	mu     sync.Mutex
 	client *ilink.Client
-	token  string
+	cred   ilink.Cred
 }
 
 func New(st *store.Store, hc *http.Client, clk clock.Clock) *Session {
@@ -72,12 +73,25 @@ func (s *Session) Cred(ctx context.Context) (ilink.Cred, bool, error) {
 }
 
 // SaveCred 保存新凭证，清除暂停状态，并把 token 记进历史（扫码时上送）。
+// 换了 Bot（BotID 不同）就清掉旧的 getupdates 游标；换了用户（UserID 不同）就清掉旧的 context_token。
+// 所有键在一个事务里写入，要么全成功要么全不变。
 func (s *Session) SaveCred(ctx context.Context, c ilink.Cred) error {
+	if c.BotToken == "" {
+		return errors.New("session: 拒绝保存空的 bot_token")
+	}
 	b, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	hist := append([]string{c.BotToken}, s.TokenHistory(ctx)...)
+	old, hadOld, err := s.Cred(ctx)
+	if err != nil {
+		return err
+	}
+	prev, err := s.tokenHistory(ctx)
+	if err != nil {
+		return err
+	}
+	hist := append([]string{c.BotToken}, prev...)
 	uniq := hist[:0]
 	seen := map[string]bool{}
 	for _, t := range hist {
@@ -90,21 +104,35 @@ func (s *Session) SaveCred(ctx context.Context, c ilink.Cred) error {
 		uniq = uniq[:maxTokenHistory]
 	}
 	hb, _ := json.Marshal(uniq)
-	for k, v := range map[string]string{keyCred: string(b), keyTokens: string(hb), keyPausedUntil: "0", keyStaleCount: "0"} {
-		if err := s.st.SetKV(ctx, k, v); err != nil {
-			return err
+	var del []string
+	if hadOld && old.BotID != c.BotID {
+		del = append(del, keyBuf)
+	}
+	if hadOld && old.UserID != c.UserID {
+		del = append(del, keyContext, keyContextAt)
+	}
+	return s.st.SetKVs(ctx, map[string]string{
+		keyCred: string(b), keyTokens: string(hb), keyPausedUntil: "0", keyStaleCount: "0",
+	}, del)
+}
+
+func (s *Session) tokenHistory(ctx context.Context) ([]string, error) {
+	raw, ok, err := s.st.GetKV(ctx, keyTokens)
+	if err != nil {
+		return nil, err
+	}
+	var list []string
+	if ok {
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return list, nil
 }
 
 // TokenHistory 是最近用过的 bot_token，新的在前，最多 10 个。
 func (s *Session) TokenHistory(ctx context.Context) []string {
-	raw, ok, _ := s.st.GetKV(ctx, keyTokens)
-	var list []string
-	if ok {
-		json.Unmarshal([]byte(raw), &list)
-	}
+	list, _ := s.tokenHistory(ctx)
 	return list
 }
 
@@ -167,10 +195,15 @@ func (s *Session) Client(ctx context.Context) (*ilink.Client, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.client == nil || s.token != c.BotToken {
-		s.client, s.token = s.NewClient(c), c.BotToken
+	if s.client == nil || !sameCred(s.cred, c) {
+		s.client, s.cred = s.NewClient(c), c
 	}
 	return s.client, nil
+}
+
+// sameCred 比较会影响客户端行为的字段；LoginAt 是 time.Time，反序列化后 Location 指针不同，不能直接 ==。
+func sameCred(a, b ilink.Cred) bool {
+	return a.BotToken == b.BotToken && a.BotID == b.BotID && a.UserID == b.UserID && a.BaseURL == b.BaseURL
 }
 
 func (s *Session) RememberContext(ctx context.Context, token string, at time.Time) error {

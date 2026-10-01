@@ -143,6 +143,44 @@ func (s *Store) UpdateItem(ctx context.Context, it *model.Item) error {
 	})
 }
 
+// ModifyItem 在一个事务里读出条目（含标签）、交给 fn 修改、写回全部可变列并重建索引，返回修改后的条目。
+// 用于「读出后要等很久才写回」的场景（如 AI 批处理）：读和写在同一事务里，不会覆盖期间别处的修改。
+// fn 返回错误则回滚并原样返回；条目不存在返回 ErrNotFound。
+func (s *Store) ModifyItem(ctx context.Context, id int64, fn func(it *model.Item) error) (*model.Item, error) {
+	var out *model.Item
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		it, err := scanItem(tx.QueryRowContext(ctx, `SELECT `+itemCols+` FROM items WHERE id = ?`, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if it.Tags, err = loadTags(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := fn(it); err != nil {
+			return err
+		}
+		it.ID = id
+		it.UpdatedAt = s.now()
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET updated_at=?, raw_text=?, url=?, link_title=?, link_desc=?,
+			category=?, category_by=?, level=?, status=?, title=?, summary=?, detail=?, priority=?, due_at=?,
+			due_has_time=?, processed_level=?, process_error=?, process_attempts=?, tokens_used=? WHERE id=?`,
+			it.UpdatedAt.Unix(), it.RawText, it.URL, it.LinkTitle, it.LinkDesc, it.Category, it.CategoryBy,
+			it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
+			b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts, it.TokensUsed, id); err != nil {
+			return err
+		}
+		out = it
+		return s.Reindex(ctx, tx, id)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SetLink 由轻处理写入链接和网页标题、简介。
 func (s *Store) SetLink(ctx context.Context, id int64, url, title, desc string) error {
 	return s.Tx(ctx, func(tx *sql.Tx) error {

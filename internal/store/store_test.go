@@ -221,3 +221,66 @@ func TestSentMsgs(t *testing.T) {
 		t.Fatalf("by msg id: %+v %v", it, err)
 	}
 }
+
+func TestModifyItemKeepsConcurrentChanges(t *testing.T) {
+	st, _ := openTest(t)
+	ctx := context.Background()
+	it := &model.Item{MsgID: "mod-1", RawText: "原文", Category: model.CatTodo}
+	id, err := st.InsertItem(ctx, it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := st.GetItem(ctx, id) // 旧副本（相当于批处理读出后等 AI）
+	if _, err := st.ModifyItem(ctx, id, func(x *model.Item) error { x.Status = model.StatusDone; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if old.Status != model.StatusOpen {
+		t.Fatalf("old copy status = %s", old.Status)
+	}
+	got, err := st.ModifyItem(ctx, id, func(x *model.Item) error { x.Title = "新标题"; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusDone || got.Title != "新标题" {
+		t.Fatalf("returned = %+v", got)
+	}
+	again, _ := st.GetItem(ctx, id)
+	if again.Status != model.StatusDone || again.Title != "新标题" {
+		t.Fatalf("stored = %+v", again)
+	}
+}
+
+func TestModifyItemRollbackAndMissing(t *testing.T) {
+	st, _ := openTest(t)
+	ctx := context.Background()
+	id, _ := st.InsertItem(ctx, &model.Item{MsgID: "mod-2", RawText: "原文", Title: "旧"})
+	boom := errors.New("boom")
+	if _, err := st.ModifyItem(ctx, id, func(x *model.Item) error { x.Title = "不该落库"; return boom }); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if it, _ := st.GetItem(ctx, id); it.Title != "旧" {
+		t.Fatalf("title = %q, want rollback", it.Title)
+	}
+	if _, err := st.ModifyItem(ctx, 9999, func(*model.Item) error { return nil }); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSetKVs(t *testing.T) {
+	st, _ := openTest(t)
+	ctx := context.Background()
+	st.SetKV(ctx, "a", "1")
+	st.SetKV(ctx, "b", "2")
+	if err := st.SetKVs(ctx, map[string]string{"a": "9", "c": "3"}, []string{"b", "nope"}); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := st.GetKV(ctx, "a"); v != "9" {
+		t.Fatalf("a = %q", v)
+	}
+	if v, ok, _ := st.GetKV(ctx, "c"); !ok || v != "3" {
+		t.Fatalf("c = %q", v)
+	}
+	if _, ok, _ := st.GetKV(ctx, "b"); ok {
+		t.Fatal("b not deleted")
+	}
+}
