@@ -89,9 +89,14 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, clock.Zone)
 }
 
-func toResult(raw rawResult, received time.Time, needDetail bool) (Result, error) {
+func toResult(raw rawResult, it *model.Item, needDetail bool) (Result, error) {
 	id, _ := raw.ID.Int64()
+	received := it.CreatedAt
 	cat, ok := categoryAlias[strings.ToLower(strings.TrimSpace(raw.Category))]
+	if !ok && (it.CategoryBy == model.ByPrefix || it.CategoryBy == model.ByManual) {
+		// 固定分类的条目，apply 不会采用 AI 的分类，不因此判失败。
+		cat, ok = it.Category, true
+	}
 	if !ok {
 		return Result{}, fmt.Errorf("AI 给的分类不合法：%q", raw.Category)
 	}
@@ -157,7 +162,7 @@ func parseItems(content string, items []*model.Item, needDetail bool) (map[int64
 		if _, done := results[id]; done {
 			continue
 		}
-		res, err := toResult(raw, it.CreatedAt, needDetail)
+		res, err := toResult(raw, it, needDetail)
 		if err != nil {
 			errs[id] = err
 			continue
@@ -179,7 +184,7 @@ func parseItems(content string, items []*model.Item, needDetail bool) (map[int64
 	return results, errs, nil
 }
 
-// apply 把 AI 的结果写回条目（纯函数，只改 AI 负责的字段，调用方在 store.ModifyItem 回调里调用）。
+// apply 把 AI 的结果写回条目（纯函数，只改 AI 负责的字段，不碰 Tags——标签由调用方用 store.AddTags 写入 r.Tags，调用方在 store.ModifyItem 回调里调用）。
 func apply(it *model.Item, r Result, level model.Level) {
 	if it.CategoryBy == model.ByAI && r.Category != it.Category {
 		it.Category = r.Category
@@ -199,10 +204,6 @@ func apply(it *model.Item, r Result, level model.Level) {
 	}
 	if it.DueAt == nil && r.Due != nil {
 		it.DueAt, it.DueHasTime = r.Due, r.DueHasTime
-	}
-	// 标签只增不减：保留用户和关键词打的标签，AI 的标签追加在后面。
-	if len(r.Tags) > 0 {
-		it.Tags = model.NormalizeTags(append(append([]string(nil), it.Tags...), r.Tags...))
 	}
 	if level.Rank() > it.ProcessedLevel.Rank() {
 		it.ProcessedLevel = level

@@ -168,13 +168,23 @@ func TestApplyKeepsFixedCategory(t *testing.T) {
 	}
 }
 
-func TestApplyMergesTagsAndResetsAttempts(t *testing.T) {
+func TestApplyLeavesTagsAndResetsAttempts(t *testing.T) {
 	it := &model.Item{CategoryBy: model.ByManual, Category: model.CatIdea, Status: model.StatusKept, Tags: []string{"点子", "我的"}, ProcessError: "e", ProcessAttempts: 2, Title: "旧", RawText: "原文"}
-	apply(it, Result{Category: model.CatTodo, Tags: []string{"ai", "我的"}}, model.LevelLight)
-	if strings.Join(it.Tags, ",") != "点子,我的,ai" {
+	apply(it, Result{Category: model.CatTodo, Tags: []string{"ai"}}, model.LevelLight)
+	if strings.Join(it.Tags, ",") != "点子,我的" {
 		t.Fatalf("tags = %v", it.Tags)
 	}
-	if it.ProcessAttempts != 0 || it.ProcessError != "" || it.Title != "旧" || it.RawText != "原文" || it.Category != model.CatIdea {
+	if it.ProcessAttempts != 0 || it.ProcessError != "" || it.RawText != "原文" || it.Category != model.CatIdea {
 		t.Fatalf("it = %+v", it)
+	}
+}
+
+func TestParseItemsFixedCategoryIgnoresAIValue(t *testing.T) {
+	its := items(1, 2)
+	its[0].CategoryBy, its[0].Category = model.ByManual, model.CatIdea
+	its[1].CategoryBy, its[1].Category = model.ByPrefix, model.CatTodo
+	res, errs, err := parseItems(`{"items":[{"id":1,"category":"inbox"},{"id":2,"category":"乱写"}]}`, its, false)
+	if err != nil || len(errs) != 0 || res[1].Category != model.CatIdea || res[2].Category != model.CatTodo {
+		t.Fatalf("res=%+v errs=%v err=%v", res, errs, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/llm"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
@@ -42,7 +43,7 @@ type promptItem struct {
 func toPromptItem(it *model.Item, maxText int) promptItem {
 	p := promptItem{
 		ID:        it.ID,
-		Received:  it.CreatedAt.Format(timeLayout),
+		Received:  it.CreatedAt.In(clock.Zone).Format(timeLayout),
 		Text:      model.TruncateRunes(it.RawText, maxText),
 		URL:       it.URL,
 		LinkTitle: it.LinkTitle,
@@ -55,6 +56,7 @@ func toPromptItem(it *model.Item, maxText int) promptItem {
 }
 
 func systemPrompt(level model.Level, now time.Time, tags []string) string {
+	now = now.In(clock.Zone)
 	var b strings.Builder
 	b.WriteString("你是个人收集箱的整理助手。用户把平时看到的内容、想到的点子和要做的事发给自己，你负责整理。\n")
 	b.WriteString("只输出一个 JSON 对象，不要输出任何其他文字。\n\n")

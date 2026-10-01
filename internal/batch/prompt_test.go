@@ -3,6 +3,7 @@ package batch
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/llm"
@@ -71,5 +72,17 @@ func TestBuildRequest(t *testing.T) {
 	}
 	if _, ok := req.Messages[1].Content.([]llm.Part); !ok {
 		t.Fatal("images must use parts")
+	}
+}
+
+func TestPromptUsesShanghaiTime(t *testing.T) {
+	utc := time.Date(2026, 10, 1, 17, 0, 0, 0, time.UTC)
+	p := systemPrompt(model.LevelLight, utc, nil)
+	if !strings.Contains(p, "2026-10-02 01:00 星期五") {
+		t.Fatalf("prompt = %s", p)
+	}
+	it := &model.Item{ID: 1, CreatedAt: utc}
+	if got := toPromptItem(it, 10).Received; got != "2026-10-02 01:00" {
+		t.Fatalf("received = %s", got)
 	}
 }
