@@ -161,6 +161,7 @@ func (s *Server) Routes(root *http.ServeMux) {
 	post("/batch/run", s.batchRun)
 	post("/items/{id}/status", s.itemStatus)
 	post("/items/{id}/deep", s.itemDeep)
+	post("/items/{id}/delete", s.itemDelete)
 	get("/items/{id}", s.itemPage)
 	post("/items/{id}", s.itemSave)
 	get("/search", s.search)

@@ -3,6 +3,9 @@ package web
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -173,4 +176,47 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, withMsg(r.URL.Path, "saved"))
+}
+
+// itemDelete 删除条目及其附件文件。文件在数据库事务提交之后再删，删不掉只记 WARN（不影响结果）。
+func (s *Server) itemDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.itemID(w, r)
+	if !ok {
+		return
+	}
+	paths, err := s.d.Store.DeleteItem(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+		return
+	case err != nil:
+		s.fail(w, err)
+		return
+	}
+	s.removeMedia(paths)
+	back := safeBack(r.FormValue("back"))
+	if strings.HasPrefix(back, "/items/"+strconv.FormatInt(id, 10)) {
+		back = "/" // 刚删掉的条目详情页已不存在
+	}
+	s.redirect(w, r, withMsg(back, "deleted"))
+}
+
+func (s *Server) removeMedia(rels []string) {
+	root, err := filepath.EvalSymlinks(s.d.MediaDir)
+	if err != nil {
+		if len(rels) > 0 {
+			s.d.Log.Warn("删除附件文件失败", "err", err)
+		}
+		return
+	}
+	for _, rel := range rels {
+		clean := path.Clean("/" + rel)[1:]
+		if clean == "" || clean != rel || strings.ContainsAny(rel, "\x00\\") {
+			s.d.Log.Warn("附件路径不规范，未删除文件", "path", rel)
+			continue
+		}
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(clean))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.d.Log.Warn("删除附件文件失败", "path", rel, "err", err)
+		}
+	}
 }

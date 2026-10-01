@@ -67,4 +67,11 @@
   </form>
 </section>
 {{end}}
+<section class="card">
+  <h2>危险操作</h2>
+  <p class="desc">连同附件一起永久删除。</p>
+  <form method="post" action="{{base}}/items/{{.Item.ID}}/delete" class="inline">
+    <button type="submit" class="btn danger" data-confirm="删除后无法恢复，确定删除？">删除这条记录</button>
+  </form>
+</section>
 {{end}}

@@ -72,15 +72,14 @@
   </div>
   {{with index $.Thumbs .ID}}<img class="thumb" src="{{base}}/media/{{.}}" alt="" loading="lazy" width="56" height="56">{{end}}
   {{$it := .}}{{$ch := menuChoices .}}
-  {{if or $ch (ne .Level "deep")}}
   <details class="rowmenu">
     <summary aria-label="更多操作：{{display .}}">{{template "i" "more"}}</summary>
     <div class="pop">
       {{range $ch}}<form method="post" action="{{base}}/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit">{{statusName .}}</button></form>{{end}}
       {{if ne .Level "deep"}}<form method="post" action="{{base}}/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit">深入研究</button></form>{{end}}
+      <form method="post" action="{{base}}/items/{{.ID}}/delete"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit" class="danger" data-confirm="删除后无法恢复，确定删除？">删除</button></form>
     </div>
   </details>
-  {{end}}
 </article>
 {{end}}
 </div>

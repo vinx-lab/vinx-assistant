@@ -548,3 +548,5 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 .w98 { width: 98%; }
 .w99 { width: 99%; }
 .w100 { width: 100%; }
+.rowmenu .pop button.danger { color: var(--warn); }
+.rowmenu .pop button.danger:hover { background: var(--warn-soft); }

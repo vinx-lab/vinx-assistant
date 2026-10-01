@@ -217,3 +217,50 @@ func (s *Store) Reindex(ctx context.Context, tx *sql.Tx, id int64) error {
 		FROM items i WHERE i.id = ?`, id)
 	return err
 }
+
+// DeleteItem 在一个事务里删除条目及其关联数据：标签关联、附件记录、提醒、全文索引行、引用它的指令记录。
+// tags 表本身、seen_msgs（保留去重，同一条消息重投时不会再入库）和 llm_usage（用量记录，item_id 置空）不删。
+// 返回该条目附件在媒体目录下的相对路径，事务提交后由调用方删文件。条目不存在时返回 ErrNotFound。
+func (s *Store) DeleteItem(ctx context.Context, id int64) ([]string, error) {
+	var paths []string
+	err := s.Tx(ctx, func(tx *sql.Tx) error {
+		var one int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM items WHERE id = ?`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT rel_path FROM attachments WHERE item_id = ? AND rel_path <> '' ORDER BY id`, id)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			paths = append(paths, p)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, q := range []string{
+			`DELETE FROM item_tags WHERE item_id = ?`,
+			`DELETE FROM attachments WHERE item_id = ?`,
+			`DELETE FROM reminders WHERE item_id = ?`,
+			`DELETE FROM actions WHERE item_id = ?`,
+			`DELETE FROM items_fts WHERE rowid = ?`,
+			`DELETE FROM items WHERE id = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return paths, nil
+}
