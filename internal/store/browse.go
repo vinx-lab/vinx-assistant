@@ -15,7 +15,7 @@ import (
 type ListQuery struct {
 	Category model.Category
 	Tag      string // 空 = 不按标签筛选
-	All      bool   // false = 只要还没处理完的（model.IsOpen）
+	Done     bool   // false = 默认视图（boardOpenCond）；true = 已处理（boardDoneCond，只对 HasDoneView 的分类有意义）
 	Limit    int
 }
 
@@ -24,6 +24,20 @@ const openCond = `((category = 'research' AND status IN ('new','doing'))
 	OR (category IN ('later','inbox') AND status = 'new')
 	OR (category = 'todo' AND status = 'open'))`
 
+// boardOpenCond 是看板默认视图：没处理完的，再加上点子和资料——它们是参考材料，状态总是 kept，没有「处理完」一说。
+// 提醒和每日摘要仍按 model.IsOpen，不受影响。
+const boardOpenCond = `(` + openCond + ` OR category IN ('idea','archive'))`
+
+// boardDoneCond 是看板「已处理」视图：待办的完成/取消、研究的完成/放弃、稍后看的已读。
+const boardDoneCond = `((category = 'todo' AND status IN ('done','cancelled'))
+	OR (category = 'research' AND status IN ('done','dropped'))
+	OR (category = 'later' AND status = 'read'))`
+
+// HasDoneView 报告分类有没有「已处理」视图（点子、资料、未整理没有）。
+func HasDoneView(c model.Category) bool {
+	return c == model.CatTodo || c == model.CatResearch || c == model.CatLater
+}
+
 // ListItems 返回某个分类的条目（含标签）。待办按截止时间排在前面，其余按最新收到排。
 func (s *Store) ListItems(ctx context.Context, q ListQuery) ([]model.Item, error) {
 	if q.Limit <= 0 {
@@ -31,8 +45,10 @@ func (s *Store) ListItems(ctx context.Context, q ListQuery) ([]model.Item, error
 	}
 	where := []string{"category = ?"}
 	args := []any{q.Category}
-	if !q.All {
-		where = append(where, openCond)
+	if q.Done {
+		where = append(where, boardDoneCond)
+	} else {
+		where = append(where, boardOpenCond)
 	}
 	if q.Tag != "" {
 		where = append(where, `id IN (SELECT x.item_id FROM item_tags x JOIN tags t ON t.id = x.tag_id WHERE t.name = ?)`)
@@ -61,27 +77,26 @@ func (s *Store) fillTags(ctx context.Context, items []model.Item) error {
 	return nil
 }
 
-// CategoryCounts 返回各分类的条目数（all=false 时只数没处理完的）。
-func (s *Store) CategoryCounts(ctx context.Context, all bool) (map[model.Category]int, error) {
-	q := `SELECT category, count(*) FROM items`
-	if !all {
-		q += ` WHERE ` + openCond
-	}
-	rows, err := s.db.QueryContext(ctx, q+` GROUP BY category`)
+// BoardCounts 返回各分类在看板两个视图里的条目数：open 是默认视图（boardOpenCond），done 是已处理视图（boardDoneCond）。
+func (s *Store) BoardCounts(ctx context.Context) (open, done map[model.Category]int, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT category,
+		COALESCE(SUM(CASE WHEN `+boardOpenCond+` THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN `+boardDoneCond+` THEN 1 ELSE 0 END), 0)
+		FROM items GROUP BY category`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	out := map[model.Category]int{}
+	open, done = map[model.Category]int{}, map[model.Category]int{}
 	for rows.Next() {
 		var c string
-		var n int
-		if err := rows.Scan(&c, &n); err != nil {
-			return nil, err
+		var o, d int
+		if err := rows.Scan(&c, &o, &d); err != nil {
+			return nil, nil, err
 		}
-		out[model.Category(c)] = n
+		open[model.Category(c)], done[model.Category(c)] = o, d
 	}
-	return out, rows.Err()
+	return open, done, rows.Err()
 }
 
 // SearchQuery 是搜索页的条件；零值字段不参与筛选。

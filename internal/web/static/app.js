@@ -67,6 +67,10 @@
       .then(function () { b.disabled = false; });
   });
 
+  // 看板分类在手机上横向滚动：把当前分类滚到可见处（不动页面的纵向位置）
+  var cur = document.querySelector('.tabs a[aria-current]');
+  if (cur) cur.parentNode.scrollLeft = cur.offsetLeft - cur.parentNode.offsetLeft - 16;
+
   // 3. 扫码登录：轮询状态
   var box = document.querySelector('[data-login-state]');
   if (!box) return;

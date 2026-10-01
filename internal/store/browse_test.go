@@ -51,21 +51,28 @@ func TestListItemsAndCounts(t *testing.T) {
 	if got := ids(todo); len(got) != 2 || got[0] != 2 || got[1] != 1 {
 		t.Fatalf("open todos by due = %v", got)
 	}
-	all, _ := st.ListItems(ctx, ListQuery{Category: model.CatTodo, All: true})
-	if len(all) != 3 {
-		t.Fatalf("all todos = %v", ids(all))
+	done, _ := st.ListItems(ctx, ListQuery{Category: model.CatTodo, Done: true})
+	if got := ids(done); len(got) != 1 || got[0] != 3 {
+		t.Fatalf("done todos = %v", got)
 	}
 	tagged, _ := st.ListItems(ctx, ListQuery{Category: model.CatResearch, Tag: "前端"})
 	if len(tagged) != 1 || tagged[0].Tags[0] != "前端" {
 		t.Fatalf("tagged = %+v", tagged)
 	}
-	counts, _ := st.CategoryCounts(ctx, false)
-	if counts[model.CatTodo] != 2 || counts[model.CatResearch] != 1 || counts[model.CatIdea] != 0 {
-		t.Fatalf("open counts = %v", counts)
+	// 点子、资料在默认视图里总是列出（状态 kept 不算「没处理完」，但它们是参考材料）
+	ideas, _ := st.ListItems(ctx, ListQuery{Category: model.CatIdea})
+	if got := ids(ideas); len(got) != 1 || got[0] != 5 {
+		t.Fatalf("ideas = %v", got)
 	}
-	allCounts, _ := st.CategoryCounts(ctx, true)
-	if allCounts[model.CatTodo] != 3 || allCounts[model.CatIdea] != 1 {
-		t.Fatalf("all counts = %v", allCounts)
+	open, doneCounts, err := st.BoardCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open[model.CatTodo] != 2 || open[model.CatResearch] != 1 || open[model.CatIdea] != 1 {
+		t.Fatalf("open counts = %v", open)
+	}
+	if doneCounts[model.CatTodo] != 1 || doneCounts[model.CatResearch] != 0 || doneCounts[model.CatIdea] != 0 {
+		t.Fatalf("done counts = %v", doneCounts)
 	}
 }
 

@@ -24,11 +24,13 @@
 <nav class="tabs" aria-label="分类">
   {{range .Tabs}}<a href="{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{.Name}} <b>{{.Count}}</b></a>{{end}}
 </nav>
+{{if or .Toggle .Tag}}
 <div class="filters">
-  {{if .All}}<a href="/?cat={{.Cat}}{{if .Tag}}&tag={{.Tag}}{{end}}">只看未处理</a>{{else}}<a href="/?cat={{.Cat}}&all=1{{if .Tag}}&tag={{.Tag}}{{end}}">显示全部（含已处理）</a>{{end}}
-  {{if .Tag}}<span>标签「{{.Tag}}」</span><a href="/?cat={{.Cat}}{{if .All}}&all=1{{end}}">清除筛选</a>{{end}}
+  {{if .Toggle}}<nav class="seg" aria-label="处理状态"><a href="{{.OpenHref}}" {{if not .Done}}aria-current="page"{{end}}>未处理 <b>{{.OpenCount}}</b></a><a href="{{.DoneHref}}" {{if .Done}}aria-current="page"{{end}}>已处理 <b>{{.DoneCount}}</b></a></nav>{{end}}
+  {{if .Tag}}<span>标签「{{.Tag}}」</span><a href="{{.ClearTagHref}}">清除筛选</a>{{end}}
 </div>
-{{if .Tags}}<div class="tags" aria-label="标签">{{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.All}}&all=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
+{{end}}
+{{if .Tags}}<div class="tags" aria-label="标签">{{range .Tags}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
 
 <div class="list">
 {{range .Items}}
@@ -58,7 +60,7 @@
   </div>
 </article>
 {{else}}
-<p class="empty">这里还没有条目。</p>
+<p class="empty">{{if .Done}}还没有已处理的条目。{{else}}这里还没有条目。{{end}}</p>
 {{end}}
 </div>
 {{end}}

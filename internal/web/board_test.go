@@ -163,3 +163,30 @@ func TestXSSIsEscaped(t *testing.T) {
 		t.Fatalf("csp = %q", csp)
 	}
 }
+
+// 点子、资料默认就列出（计数也算上）；待办等分类可在「未处理 / 已处理」之间切换，点子、资料没有这个切换。
+func TestBoardOpenAndDoneViews(t *testing.T) {
+	e := newEnv(t)
+	e.item(t, &model.Item{MsgID: "1", RawText: "还没办的事", Category: model.CatTodo})
+	e.item(t, &model.Item{MsgID: "2", RawText: "已经办完的事", Category: model.CatTodo, Status: model.StatusDone})
+	e.item(t, &model.Item{MsgID: "3", RawText: "取消了的事", Category: model.CatTodo, Status: model.StatusCancelled})
+	e.item(t, &model.Item{MsgID: "4", RawText: "一个点子", Category: model.CatIdea})
+	e.item(t, &model.Item{MsgID: "5", RawText: "一份资料", Category: model.CatArchive})
+
+	_, body := e.get(t, "/?cat=todo")
+	mustContain(t, body, "待办 <b>1</b>", "点子 <b>1</b>", "资料 <b>1</b>", "#1 还没办的事",
+		`<a href="/?cat=todo" aria-current="page">未处理 <b>1</b></a>`, `<a href="/?cat=todo&amp;done=1" >已处理 <b>2</b></a>`)
+	mustNotContain(t, body, "#2 已经办完的事", "#3 取消了的事")
+
+	_, body = e.get(t, "/?cat=todo&done=1")
+	mustContain(t, body, "#2 已经办完的事", "#3 取消了的事", `aria-current="page">已处理 <b>2</b></a>`)
+	mustNotContain(t, body, "#1 还没办的事")
+
+	for cat, want := range map[string]string{"idea": "#4 一个点子", "archive": "#5 一份资料"} {
+		_, body = e.get(t, "/?cat="+cat)
+		mustContain(t, body, want)
+		mustNotContain(t, body, "未处理 <b>", "已处理 <b>")
+		_, body = e.get(t, "/?cat="+cat+"&done=1") // 没有已处理视图的分类忽略 done
+		mustContain(t, body, want)
+	}
+}

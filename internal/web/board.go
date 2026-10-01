@@ -104,20 +104,24 @@ type boardData struct {
 	Tabs   []tab
 	Cat    model.Category
 	Tag    string
-	All    bool
-	Tags   []store.TagCount
-	Items  []model.Item
-	Thumbs map[int64]string
-	Back   string
+	Done   bool // 「已处理」视图
+	Toggle bool // 这个分类有「未处理 / 已处理」切换（点子、资料、未整理没有）
+	// 切换和清除标签的链接，以及两个视图的条目数
+	OpenHref, DoneHref, ClearTagHref string
+	OpenCount, DoneCount             int
+	Tags                             []store.TagCount
+	Items                            []model.Item
+	Thumbs                           map[int64]string
+	Back                             string
 }
 
-func boardHref(cat model.Category, tag string, all bool) string {
+func boardHref(cat model.Category, tag string, done bool) string {
 	q := url.Values{"cat": {string(cat)}}
 	if tag != "" {
 		q.Set("tag", tag)
 	}
-	if all {
-		q.Set("all", "1")
+	if done {
+		q.Set("done", "1")
 	}
 	return "/?" + q.Encode()
 }
@@ -129,26 +133,29 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 	if !model.ValidCategory(cat) {
 		cat = model.CatTodo
 	}
-	tag, all := q.Get("tag"), q.Get("all") == "1"
+	tag, done := q.Get("tag"), q.Get("done") == "1" && store.HasDoneView(cat)
 	st, err := s.d.Store.LoadSettings(ctx)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	d := boardData{Page: s.page(r, "看板", "board"), Cat: cat, Tag: tag, All: all, Back: boardHref(cat, tag, all)}
+	d := boardData{Page: s.page(r, "看板", "board"), Cat: cat, Tag: tag, Done: done, Toggle: store.HasDoneView(cat), Back: boardHref(cat, tag, done),
+		OpenHref: boardHref(cat, tag, false), DoneHref: boardHref(cat, tag, true), ClearTagHref: boardHref(cat, "", done)}
 	if d.Status, err = s.statusBar(ctx, now, st); err != nil {
 		s.fail(w, err)
 		return
 	}
-	counts, err := s.d.Store.CategoryCounts(ctx, all)
+	open, doneCounts, err := s.d.Store.BoardCounts(ctx)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
+	d.OpenCount, d.DoneCount = open[cat], doneCounts[cat]
+	// 分类标签上的数字是默认视图（未处理 + 点子、资料）的条目数；切到别的分类回到默认视图
 	for _, c := range model.Categories {
-		d.Tabs = append(d.Tabs, tab{Cat: c, Name: model.CategoryName(c), Count: counts[c], Active: c == cat, Href: boardHref(c, tag, all)})
+		d.Tabs = append(d.Tabs, tab{Cat: c, Name: model.CategoryName(c), Count: open[c], Active: c == cat, Href: boardHref(c, tag, false)})
 	}
-	if d.Items, err = s.d.Store.ListItems(ctx, store.ListQuery{Category: cat, Tag: tag, All: all}); err != nil {
+	if d.Items, err = s.d.Store.ListItems(ctx, store.ListQuery{Category: cat, Tag: tag, Done: done}); err != nil {
 		s.fail(w, err)
 		return
 	}

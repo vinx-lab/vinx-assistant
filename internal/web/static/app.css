@@ -169,6 +169,11 @@ legend { padding: 0 6px; font-weight: 650; font-size: 15px; }
 @media (min-width: 720px) { .tabs { margin: 0; padding: 2px 0; flex-wrap: wrap; } }
 .filters { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
 .filters a { display: inline-flex; align-items: center; min-height: 32px; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--surface-2); }
+.seg a { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border-radius: 999px; font-size: 14px; color: var(--muted); text-decoration: none; touch-action: manipulation; }
+.seg a:hover { color: var(--fg); }
+.seg a[aria-current] { background: var(--surface); color: var(--fg); font-weight: 600; box-shadow: 0 1px 2px rgba(15, 23, 32, .12); }
+.seg b { font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { display: inline-flex; align-items: center; min-height: 28px; padding: 0 8px; border-radius: var(--radius-sm); font-size: 13px; color: var(--accent-soft-fg); background: var(--accent-soft); text-decoration: none; }
 .tag:hover { color: var(--accent-soft-fg); text-decoration: underline; }
