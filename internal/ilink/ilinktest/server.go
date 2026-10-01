@@ -34,6 +34,7 @@ type Server struct {
 	updatesRet  int
 	bufs        []string
 	media       map[string][]byte
+	mediaHook   func(param string)
 	loginStates []string
 	VerifyCode  string // need_verifycode 之后要求带上的验证码
 	LongPoll    time.Duration
@@ -72,6 +73,14 @@ func (s *Server) Push(raw string) {
 func (s *Server) AddMedia(param string, cipher []byte) {
 	s.mu.Lock()
 	s.media[param] = cipher
+	s.mu.Unlock()
+}
+
+// SetMediaHook 设置媒体下载请求进入时调用的函数（在返回数据之前），测试用它制造慢下载。
+// hook 可以阻塞；nil 取消。
+func (s *Server) SetMediaHook(hook func(param string)) {
+	s.mu.Lock()
+	s.mediaHook = hook
 	s.mu.Unlock()
 }
 
@@ -183,8 +192,15 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+	param := r.URL.Query().Get("encrypted_query_param")
 	s.mu.Lock()
-	data, ok := s.media[r.URL.Query().Get("encrypted_query_param")]
+	hook := s.mediaHook
+	s.mu.Unlock()
+	if hook != nil {
+		hook(param)
+	}
+	s.mu.Lock()
+	data, ok := s.media[param]
 	s.mu.Unlock()
 	if !ok {
 		http.NotFound(w, r)

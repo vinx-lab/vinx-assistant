@@ -57,21 +57,129 @@ type Deps struct {
 type Service struct {
 	Deps
 	acker *Acker
-	bg    sync.WaitGroup
+
+	// 后处理队列：附件下载、关键词标签、抓网页标题都交给单个 worker 按入队顺序做，收件不等它们。
+	// bg 计数「已入队、还没处理或丢弃」的任务，Wait 用它等队列清空。
+	jobs   chan postJob
+	bg     sync.WaitGroup
+	ctx    context.Context // worker 用；Close 时取消，正在下载的附件随之中断
+	cancel context.CancelFunc
+	mu     sync.Mutex // 保护 closed，并让入队与 Close 互斥：Close 之后不会再有任务进队
+	closed bool
+	done   chan struct{} // worker 退出时关闭
+	dlMu   sync.Mutex    // 串行化附件下载：worker 与 RetryAttachments 不会同时下同一个附件
 }
 
-func New(d Deps) *Service {
+// postJob 是一条消息入库后的后处理：下载附件、打标签、抓标题。
+type postJob struct {
+	itemID int64
+	atts   []attJob
+	labels []string
+	url    string
+	now    time.Time // 收到消息的时间，决定附件存放目录（与入库时 created_at 一致）
+}
+
+type attJob struct {
+	a   *model.Attachment
+	idx int
+	mi  ilink.Item
+}
+
+const queueSize = 256
+
+func New(d Deps) *Service { return newService(d, queueSize) }
+
+func newService(d Deps, size int) *Service {
 	if d.Log == nil {
 		d.Log = slog.Default()
 	}
 	if d.Clock == nil {
 		d.Clock = clock.Real{}
 	}
-	return &Service{Deps: d, acker: NewAcker(5*time.Second, 30*time.Second)}
+	s := &Service{Deps: d, acker: NewAcker(5*time.Second, 30*time.Second), jobs: make(chan postJob, size), done: make(chan struct{})}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	go s.worker()
+	return s
 }
 
-// Wait 等后台轻处理结束。
+// Wait 等已入队的后处理任务都处理完（或在 Close 后被丢弃）。
 func (s *Service) Wait() { s.bg.Wait() }
+
+// Close 停止接收后处理任务并让 worker 退出，返回时 worker 已退出。正在下载的附件被中断，
+// 队列里没处理的任务直接丢弃：附件仍是 pending，之后由 RetryAttachments 补下；标签、标题不补。
+// 可重复调用；之后 Handle 照常入库，只是不再做后处理。
+func (s *Service) Close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		<-s.done
+		return
+	}
+	s.closed = true
+	s.cancel()
+	s.mu.Unlock()
+	<-s.done
+}
+
+// enqueue 把后处理任务交给 worker，从不阻塞：已关闭或队列满时放弃。
+func (s *Service) enqueue(j postJob) {
+	if len(j.atts) == 0 && len(j.labels) == 0 && (j.url == "" || s.Enricher == nil) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		s.Log.Info("后处理已停止，附件稍后由重试补下载", "item", j.itemID)
+		return
+	}
+	s.bg.Add(1)
+	select {
+	case s.jobs <- j:
+	default:
+		s.bg.Done()
+		s.Log.Warn("后处理队列已满，附件稍后由重试补下载", "item", j.itemID)
+	}
+}
+
+func (s *Service) worker() {
+	defer close(s.done)
+	for {
+		select {
+		case <-s.ctx.Done():
+			// Close 时 closed 已置位，不会再有新任务进队；丢弃剩下的并计数完成。
+			for {
+				select {
+				case <-s.jobs:
+					s.bg.Done()
+				default:
+					return
+				}
+			}
+		case j := <-s.jobs:
+			s.process(j)
+			s.bg.Done()
+		}
+	}
+}
+
+func (s *Service) process(j postJob) {
+	ctx := s.ctx
+	for _, aj := range j.atts {
+		if ctx.Err() != nil {
+			return // 关机：剩下的附件留给重试
+		}
+		s.downloadPending(ctx, aj.a, aj.idx, aj.mi, j.now)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	s.addLabels(ctx, j.itemID, j.labels)
+	if j.url != "" && s.Enricher != nil && ctx.Err() == nil {
+		ectx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		s.Enricher.Enrich(ectx, j.itemID, j.url)
+		cancel()
+	}
+}
 
 type flat struct {
 	text     string
@@ -189,35 +297,47 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	}
 	if _, err := s.Store.InsertItem(ctx, it); err != nil {
 		if errors.Is(err, store.ErrDuplicate) {
-			// 重放路径：条目已在，补一次标签（尽力而为，AddTags 幂等合并）
-			if len(p.Labels) > 0 {
-				old, gerr := s.Store.GetItemByMsgID(ctx, id)
-				switch {
-				case gerr == nil:
-					s.addLabels(ctx, old.ID, p.Labels)
-				case !errors.Is(gerr, store.ErrNotFound):
-					return gerr
-				}
-			}
-			return s.Store.MarkSeen(ctx, id, now)
+			return s.replay(ctx, id, f, p.Labels, now)
 		}
 		return err
 	}
+	job := postJob{itemID: it.ID, labels: p.Labels, url: it.URL, now: now}
 	for i, mi := range f.media {
-		s.saveAttachment(ctx, it.ID, i, mi, now)
+		if a := s.insertAttachment(ctx, it.ID, mi, now); a != nil {
+			job.atts = append(job.atts, attJob{a: a, idx: i, mi: mi})
+		}
 	}
 	s.acker.Add(now, ackLabel(it, f))
-	if it.URL != "" && s.Enricher != nil {
-		s.bg.Add(1)
-		go func(id int64, u string) {
-			defer s.bg.Done()
-			ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
-			s.Enricher.Enrich(ectx, id, u)
-		}(it.ID, it.URL)
+	err = s.Store.MarkSeen(ctx, id, now)
+	s.enqueue(job) // 条目和附件记录已落库；即使 MarkSeen 失败也照常后处理，重放时不会重复
+	return err
+}
+
+// replay 处理重放（条目已在库里）：补插缺失的附件记录（按序号比对），补打标签，交给后台；
+// 覆盖「条目入库后、附件记录插入前崩溃」的窗口。
+func (s *Service) replay(ctx context.Context, msgID string, f flat, labels []string, now time.Time) error {
+	if len(labels) > 0 || len(f.media) > 0 {
+		old, err := s.Store.GetItemByMsgID(ctx, msgID)
+		switch {
+		case err == nil:
+			job := postJob{itemID: old.ID, labels: labels, now: now}
+			if len(f.media) > 0 {
+				existing, err := s.Store.ListAttachments(ctx, old.ID)
+				if err != nil {
+					return err
+				}
+				for i := len(existing); i < len(f.media); i++ {
+					if a := s.insertAttachment(ctx, old.ID, f.media[i], now); a != nil {
+						job.atts = append(job.atts, attJob{a: a, idx: i, mi: f.media[i]})
+					}
+				}
+			}
+			s.enqueue(job)
+		case !errors.Is(err, store.ErrNotFound):
+			return err
+		}
 	}
-	s.addLabels(ctx, it.ID, p.Labels)
-	return s.Store.MarkSeen(ctx, id, now)
+	return s.Store.MarkSeen(ctx, msgID, now)
 }
 
 // addLabels 写关键词标签；标签是尽力而为，失败只记 WARN，不影响收件。
@@ -317,7 +437,8 @@ func ackLabel(it *model.Item, f flat) string {
 	return model.CategoryName(it.Category) + "｜" + title
 }
 
-func (s *Service) saveAttachment(ctx context.Context, itemID int64, idx int, mi ilink.Item, now time.Time) {
+// insertAttachment 插入一条 pending 附件记录（不下载）；失败只记日志，返回 nil。
+func (s *Service) insertAttachment(ctx context.Context, itemID int64, mi ilink.Item, now time.Time) *model.Attachment {
 	mj, _ := json.Marshal(mi)
 	a := &model.Attachment{ItemID: itemID, Kind: mi.Kind(), State: "pending", MediaJSON: string(mj), CreatedAt: now}
 	if mi.File != nil {
@@ -325,9 +446,33 @@ func (s *Service) saveAttachment(ctx context.Context, itemID int64, idx int, mi 
 	}
 	if _, err := s.Store.InsertAttachment(ctx, a); err != nil {
 		s.Log.Error("附件入库失败", "item", itemID, "err", err)
+		return nil
+	}
+	return a
+}
+
+// downloadPending 在下载锁内重新读取附件记录，仍是 pending 且没超次数才下载：
+// worker 与 RetryAttachments 可能拿到同一个附件，后到的一方看到 ok/failed 就跳过。
+func (s *Service) downloadPending(ctx context.Context, a *model.Attachment, idx int, mi ilink.Item, now time.Time) {
+	s.dlMu.Lock()
+	defer s.dlMu.Unlock()
+	list, err := s.Store.ListAttachments(ctx, a.ItemID)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Log.Error("读取附件记录失败", "attachment", a.ID, "err", err)
+		}
 		return
 	}
-	s.download(ctx, a, idx, mi, now)
+	for i := range list {
+		if list[i].ID == a.ID {
+			cur := list[i]
+			if cur.State != "pending" || cur.Attempts >= maxAttachmentAttempts {
+				return
+			}
+			s.download(ctx, &cur, idx, mi, now)
+			return
+		}
+	}
 }
 
 // download 下载、校验、落盘并更新附件记录；失败只记录，留给 RetryAttachments。
@@ -359,6 +504,11 @@ func (s *Service) download(ctx context.Context, a *model.Attachment, idx int, mi
 		a.RelPath, a.Size, a.State, a.LastError = rel, int64(len(data)), "ok", ""
 		return nil
 	}()
+	if err != nil && ctx.Err() != nil {
+		// 关机中断：不计次数、不写库（ctx 已取消写不进去），保持 pending 留给下次重试
+		s.Log.Info("附件下载被中断，稍后重试", "item", a.ItemID)
+		return
+	}
 	if err != nil && skipped {
 		a.Attempts = attempts
 		a.LastError = err.Error()
@@ -397,7 +547,7 @@ func (s *Service) RetryAttachments(ctx context.Context) {
 				idx = j
 			}
 		}
-		s.download(ctx, a, idx, mi, a.CreatedAt)
+		s.downloadPending(ctx, a, idx, mi, a.CreatedAt)
 	}
 }
 

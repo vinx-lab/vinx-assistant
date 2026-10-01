@@ -84,7 +84,11 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 	return a, nil
 }
 
-func (a *App) Close() error { return a.Store.Close() }
+// Close 停掉后处理队列（serve 退出时已停过，重复调用无害）再关数据库。
+func (a *App) Close() error {
+	a.Ingest.Close()
+	return a.Store.Close()
+}
 
 func every(ctx context.Context, d time.Duration, fn func()) {
 	t := time.NewTicker(d)
@@ -165,6 +169,8 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	defer scancel()
 	srv.Shutdown(sctx)
 	wg.Wait()
+	// 收件已停：停掉后处理队列（正在下的附件中断、积压的丢弃，附件仍是 pending，下次启动由重试补下）。
+	a.Ingest.Close()
 	a.Ingest.Wait()
 	// 退出前把还没到点的合并回执发掉；ctx 已取消，另起一个 3 秒的。
 	fctx, fcancel := context.WithTimeout(context.Background(), 3*time.Second)

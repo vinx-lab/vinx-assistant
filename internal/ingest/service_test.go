@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,6 +33,7 @@ type env struct {
 	svc    *Service
 	media  string
 	dbPath string
+	deps   Deps
 }
 
 func newEnv(t *testing.T, mod func(*Deps)) *env {
@@ -57,7 +59,45 @@ func newEnv(t *testing.T, mod func(*Deps)) *env {
 	if mod != nil {
 		mod(&d)
 	}
-	return &env{srv: srv, st: st, sess: sess, clk: clk, svc: New(d), media: d.MediaDir, dbPath: dbPath}
+	svc := New(d)
+	t.Cleanup(svc.Close)
+	return &env{srv: srv, st: st, sess: sess, clk: clk, svc: svc, media: d.MediaDir, dbPath: dbPath, deps: d}
+}
+
+// gateMedia 让假后端的媒体下载在进入时报到 entered、然后卡住，直到 release 被调用。
+// release 可重复调用；测试结束时自动放开，免得 httptest 关闭时等不到处理函数返回。
+func gateMedia(t *testing.T, e *env) (entered <-chan string, release func()) {
+	t.Helper()
+	in := make(chan string, 16)
+	gate := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	e.srv.SetMediaHook(func(param string) {
+		in <- param
+		<-gate
+	})
+	t.Cleanup(release)
+	return in, release
+}
+
+func (e *env) rawHandle(t *testing.T, svc *Service, raw string) error {
+	t.Helper()
+	var m ilink.Message
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+	return svc.Handle(context.Background(), m)
+}
+
+func waitEntered(t *testing.T, ch <-chan string) string {
+	t.Helper()
+	select {
+	case p := <-ch:
+		return p
+	case <-time.After(5 * time.Second):
+		t.Fatal("download never started")
+		return ""
+	}
 }
 
 func (e *env) handle(t *testing.T, raw string) {
@@ -464,5 +504,169 @@ func TestRefByMessageItemMsgIDResolvesOurSentMessage(t *testing.T) {
 	e.handle(t, ilinktest.RefMsgIDMsg(3, ilinktest.OwnerID, "完成", "424242"))
 	if cmd.got[1].RefText != "" || !cmd.got[1].HasRef {
 		t.Fatalf("unknown msg_id: %+v", cmd.got[1])
+	}
+}
+
+func TestSlowDownloadDoesNotBlockHandle(t *testing.T) {
+	e := newEnv(t, nil)
+	key := []byte("0123456789abcdef")
+	enc, _ := ilink.EncryptECB([]byte("\xff\xd8\xff slow"), key)
+	e.srv.AddMedia("slow", enc)
+	entered, release := gateMedia(t, e)
+
+	start := time.Now()
+	if err := e.rawHandle(t, e.svc, ilinktest.ImageMsg(1, ilinktest.OwnerID, "slow", key)); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("Handle took %v while download blocked", d)
+	}
+	waitEntered(t, entered) // 下载确实在后台进行中
+	if seen, _ := e.st.Seen(context.Background(), "1"); !seen {
+		t.Fatal("message not marked seen")
+	}
+	if it := e.item(t, 1); it.Category != model.CatArchive {
+		t.Fatalf("item = %+v", it)
+	}
+	atts, _ := e.st.ListAttachments(context.Background(), 1)
+	if len(atts) != 1 || atts[0].State != "pending" || atts[0].Attempts != 0 || atts[0].MediaJSON == "" {
+		t.Fatalf("atts while downloading = %+v", atts)
+	}
+	// 第二条消息也不被卡住
+	start = time.Now()
+	if err := e.rawHandle(t, e.svc, ilinktest.TextMsg(2, ilinktest.OwnerID, "待办：交发票")); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("second Handle took %v", d)
+	}
+	e.svc.FlushAllAcks(context.Background())
+	if sent := e.srv.Sent(); len(sent) != 1 || !strings.Contains(sent[0].Text, "已收 2 条") {
+		t.Fatalf("receipts = %+v", sent)
+	}
+	release()
+	e.svc.Wait()
+	atts, _ = e.st.ListAttachments(context.Background(), 1)
+	if atts[0].State != "ok" || atts[0].RelPath != "2026/10/1-0.jpg" || atts[0].Attempts != 1 {
+		t.Fatalf("atts after Wait = %+v", atts)
+	}
+}
+
+func TestCloseDropsQueuedJobsAndRetryRecovers(t *testing.T) {
+	e := newEnv(t, nil)
+	key := []byte("0123456789abcdef")
+	for _, p := range []string{"a", "b", "c"} {
+		enc, _ := ilink.EncryptECB([]byte("\xff\xd8\xff "+p), key)
+		e.srv.AddMedia(p, enc)
+	}
+	entered, release := gateMedia(t, e)
+	if err := e.rawHandle(t, e.svc, ilinktest.ImageMsg(1, ilinktest.OwnerID, "a", key)); err != nil {
+		t.Fatal(err)
+	}
+	waitEntered(t, entered) // worker 卡在第 1 条的下载上
+	if err := e.rawHandle(t, e.svc, ilinktest.ImageMsg(2, ilinktest.OwnerID, "b", key)); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	go func() { e.svc.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on an in-flight download")
+	}
+	e.svc.Close() // 重复调用无害
+	e.svc.Wait()  // 积压任务已丢弃并计数完成
+	// 关闭后再收消息：不 panic，条目照常入库，附件留在 pending
+	if err := e.rawHandle(t, e.svc, ilinktest.ImageMsg(3, ilinktest.OwnerID, "c", key)); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Wait()
+	for id := int64(1); id <= 3; id++ {
+		atts, _ := e.st.ListAttachments(context.Background(), id)
+		if len(atts) != 1 || atts[0].State != "pending" || atts[0].Attempts != 0 {
+			t.Fatalf("item %d atts after Close = %+v", id, atts)
+		}
+	}
+	release()
+	e.svc.RetryAttachments(context.Background())
+	for id := int64(1); id <= 3; id++ {
+		atts, _ := e.st.ListAttachments(context.Background(), id)
+		if atts[0].State != "ok" {
+			t.Fatalf("item %d after retry = %+v", id, atts[0])
+		}
+	}
+}
+
+func TestQueueFullDropsJobButAttachmentStaysPending(t *testing.T) {
+	e := newEnv(t, nil)
+	var logs syncBuf
+	d := e.deps
+	d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	svc := newService(d, 1)
+	t.Cleanup(svc.Close)
+	key := []byte("0123456789abcdef")
+	for _, p := range []string{"a", "b", "c"} {
+		enc, _ := ilink.EncryptECB([]byte("\xff\xd8\xff "+p), key)
+		e.srv.AddMedia(p, enc)
+	}
+	entered, release := gateMedia(t, e)
+	if err := e.rawHandle(t, svc, ilinktest.ImageMsg(1, ilinktest.OwnerID, "a", key)); err != nil {
+		t.Fatal(err)
+	}
+	waitEntered(t, entered)
+	for i, p := range []string{"b", "c"} { // b 排队，c 队列已满
+		if err := e.rawHandle(t, svc, ilinktest.ImageMsg(int64(i+2), ilinktest.OwnerID, p, key)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !strings.Contains(logs.String(), "后处理队列已满") {
+		t.Fatalf("missing queue-full warn: %s", logs.String())
+	}
+	release()
+	svc.Wait()
+	want := map[int64]string{1: "ok", 2: "ok", 3: "pending"}
+	for id, st := range want {
+		atts, _ := e.st.ListAttachments(context.Background(), id)
+		if len(atts) != 1 || atts[0].State != st {
+			t.Fatalf("item %d atts = %+v, want %s", id, atts, st)
+		}
+	}
+	svc.RetryAttachments(context.Background())
+	if atts, _ := e.st.ListAttachments(context.Background(), 3); atts[0].State != "ok" {
+		t.Fatalf("dropped job not recovered by retry: %+v", atts[0])
+	}
+}
+
+func TestReplayRestoresMissingAttachment(t *testing.T) {
+	e := newEnv(t, nil)
+	key := []byte("0123456789abcdef")
+	enc, _ := ilink.EncryptECB([]byte("\xff\xd8\xff img"), key)
+	e.srv.AddMedia("img", enc)
+	raw := ilinktest.ImageMsg(1, ilinktest.OwnerID, "img", key)
+	e.handle(t, raw)
+	// 模拟「条目已入库、附件还没插入就崩溃」：删掉附件记录和已读标记，再收一次同一条消息
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DELETE FROM attachments; DELETE FROM seen_msgs`); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(t, raw)
+	atts, _ := e.st.ListAttachments(context.Background(), 1)
+	if len(atts) != 1 || atts[0].State != "ok" || atts[0].RelPath != "2026/10/1-0.jpg" {
+		t.Fatalf("atts after replay = %+v", atts)
+	}
+	if _, err := e.st.GetItem(context.Background(), 2); err == nil {
+		t.Fatal("replay created a second item")
+	}
+	// 附件已在：再重放一次不重复插入
+	if _, err := db.Exec(`DELETE FROM seen_msgs`); err != nil {
+		t.Fatal(err)
+	}
+	e.handle(t, raw)
+	if atts, _ := e.st.ListAttachments(context.Background(), 1); len(atts) != 1 {
+		t.Fatalf("replay duplicated attachments: %+v", atts)
 	}
 }
