@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"path/filepath"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestParseConfig(t *testing.T) {
 		t.Fatalf("flags win: %+v %v", cfg, err)
 	}
 	cfg, _ = parseConfig(flag.NewFlagSet("x", flag.ContinueOnError), nil, func(string) string { return "" }, "/home/u", false)
-	if cfg.DataDir != "/home/u/.local/share/vinx-assistant" {
+	if want := filepath.Join("/home/u", ".local/share/vinx-assistant"); cfg.DataDir != want {
 		t.Fatalf("home default: %+v", cfg)
 	}
 }

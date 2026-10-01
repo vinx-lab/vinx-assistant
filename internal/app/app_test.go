@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,12 @@ func TestServeErrorStopsEverything(t *testing.T) {
 }
 
 func TestCheckPrivateDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		if CheckPrivateDir(t.TempDir()) != "" {
+			t.Fatal("windows should never warn")
+		}
+		return
+	}
 	d := t.TempDir()
 	if err := os.Chmod(d, 0o755); err != nil {
 		t.Fatal(err)

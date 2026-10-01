@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -153,7 +154,8 @@ func CheckPrivateDir(path string) string {
 	if err != nil || !info.IsDir() {
 		return ""
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	// Windows 没有 Unix 权限位（总是报 0777），检查无意义
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return fmt.Sprintf("数据目录权限过宽（%04o），其中含微信凭证，请执行：chmod 700 %s", info.Mode().Perm(), path)
 	}
 	return ""
