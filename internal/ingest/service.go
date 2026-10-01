@@ -189,22 +189,19 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 	}
 	if _, err := s.Store.InsertItem(ctx, it); err != nil {
 		if errors.Is(err, store.ErrDuplicate) {
-			// 重放路径：条目已在，补一次标签（AddTags 幂等合并）
+			// 重放路径：条目已在，补一次标签（尽力而为，AddTags 幂等合并）
 			if len(p.Labels) > 0 {
-				if old, gerr := s.Store.GetItemByMsgID(ctx, id); gerr == nil {
-					if terr := s.Store.AddTags(ctx, old.ID, p.Labels); terr != nil {
-						return terr
-					}
+				old, gerr := s.Store.GetItemByMsgID(ctx, id)
+				switch {
+				case gerr == nil:
+					s.addLabels(ctx, old.ID, p.Labels)
+				case !errors.Is(gerr, store.ErrNotFound):
+					return gerr
 				}
 			}
 			return s.Store.MarkSeen(ctx, id, now)
 		}
 		return err
-	}
-	if len(p.Labels) > 0 {
-		if err := s.Store.AddTags(ctx, it.ID, p.Labels); err != nil {
-			return err
-		}
 	}
 	for i, mi := range f.media {
 		s.saveAttachment(ctx, it.ID, i, mi, now)
@@ -219,7 +216,18 @@ func (s *Service) Handle(ctx context.Context, m ilink.Message) error {
 			s.Enricher.Enrich(ectx, id, u)
 		}(it.ID, it.URL)
 	}
+	s.addLabels(ctx, it.ID, p.Labels)
 	return s.Store.MarkSeen(ctx, id, now)
+}
+
+// addLabels 写关键词标签；标签是尽力而为，失败只记 WARN，不影响收件。
+func (s *Service) addLabels(ctx context.Context, itemID int64, labels []string) {
+	if len(labels) == 0 {
+		return
+	}
+	if err := s.Store.AddTags(ctx, itemID, labels); err != nil {
+		s.Log.Warn("关键词标签写入失败", "item_id", itemID, "err", err)
+	}
 }
 
 // resolveRef 把引用还原成文字：先用引用自带的原文和摘要；只有 svr_id 时（新版微信），

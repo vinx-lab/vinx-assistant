@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"crypto/md5"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -114,6 +115,35 @@ func TestHandleKeywordsBecomeTags(t *testing.T) {
 	it := e.item(t, 1)
 	if !reflect.DeepEqual(it.Tags, []string{"待办", "点子"}) || it.Category != model.CatIdea {
 		t.Fatalf("cat=%s tags=%v", it.Category, it.Tags)
+	}
+}
+
+func TestTagFailureDoesNotBreakIngest(t *testing.T) {
+	e := newEnv(t, nil)
+	db, err := sql.Open("sqlite", "file:"+e.dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER no_tags BEFORE INSERT ON item_tags BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("0123456789abcdef")
+	enc, _ := ilink.EncryptECB([]byte("voice-bytes"), key)
+	e.srv.AddMedia("v1", enc)
+	e.handle(t, ilinktest.VoiceMsg(1, ilinktest.OwnerID, "v1", key, "待办：交发票"))
+	var id int64
+	var cat string
+	if err := db.QueryRow(`SELECT id, category FROM items WHERE msg_id = '1'`).Scan(&id, &cat); err != nil || cat != string(model.CatTodo) {
+		t.Fatalf("cat=%q err=%v", cat, err)
+	}
+	if atts, _ := e.st.ListAttachments(context.Background(), id); len(atts) != 1 {
+		t.Fatalf("atts = %+v", atts)
+	}
+	e.clk.Advance(6 * time.Second)
+	e.svc.FlushAcks(context.Background())
+	if len(e.srv.Sent()) != 1 {
+		t.Fatalf("receipt not queued: %+v", e.srv.Sent())
 	}
 }
 
