@@ -14,8 +14,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vinx-lab/vinx-assistant/internal/auth"
 	"github.com/vinx-lab/vinx-assistant/internal/ingest"
 )
+
+// 设了网页密码后 /healthz 仍不需要登录，网页要登录（含带前缀的情况）。
+func TestHealthzWithPassword(t *testing.T) {
+	for _, base := range []string{"", "/todo"} {
+		a, err := New(Config{Listen: "127.0.0.1:0", DataDir: t.TempDir(), BasePath: base}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := auth.Hash("password123", 1000)
+		raw, _ := rec.Encode()
+		if err := a.Store.SetPassword(context.Background(), raw, ""); err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(a.Mux)
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		for p, want := range map[string]int{"/healthz": 200, base + "/": http.StatusSeeOther, base + "/signin": 200, base + "/static/app.css": 200} {
+			resp, err := client.Get(srv.URL + p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != want {
+				t.Errorf("base=%q %s: %d", base, p, resp.StatusCode)
+			}
+		}
+		srv.Close()
+		a.Close()
+	}
+}
 
 func freeAddr(t *testing.T) string {
 	l, err := net.Listen("tcp", "127.0.0.1:0")

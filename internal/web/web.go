@@ -1,7 +1,7 @@
 // Package web 是 Vinx 助手的网页：看板、详情、搜索、设置、用量、扫码登录。
 // 服务端用 html/template 渲染，模板、样式和少量脚本用 embed 打包，不引用任何外部资源。
 //
-// 第一期没有登录密码（spec 已接受，靠网络边界保护）。所有 POST 都经过 http.CrossOriginProtection，
+// 可选的网页密码见 signin.go（spec 0003）；没设密码时靠网络边界保护。所有 POST 都经过 http.CrossOriginProtection，
 // 防止别的网页借浏览器偷偷提交表单（比如改服务商地址把 API 密钥发出去）。
 package web
 
@@ -15,8 +15,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/vinx-lab/vinx-assistant/internal/auth"
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
@@ -78,6 +80,11 @@ type Server struct {
 	pages map[string]*template.Template
 	login *loginManager
 	hosts *hostGuard
+
+	limiter    *auth.Limiter // 密码失败计数（登录和改密码共用）
+	iter       int           // 新密码的 PBKDF2 迭代次数；测试里调小
+	authMu     sync.Mutex
+	lastRecord string // 上次读到的密码记录，变了就清空失败计数
 }
 
 var pageNames = []string{"board", "item", "login", "search", "settings", "usage"}
@@ -94,11 +101,14 @@ func New(d Deps) *Server {
 	} else {
 		panic(err)
 	}
-	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts)}
+	s := &Server{d: d, pages: map[string]*template.Template{}, login: &loginManager{}, hosts: newHostGuard(d.AllowedHosts),
+		limiter: auth.NewLimiter(d.Clock), iter: auth.DefaultIterations}
 	for _, name := range pageNames {
 		s.pages[name] = template.Must(template.New(name).Funcs(s.funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+name+".html"))
 	}
+	// 登录页不用公共布局：未登录时不显示顶栏里的微信状态、整理按钮
+	s.pages["signin"] = template.Must(template.New("signin").Funcs(s.funcs()).ParseFS(templateFS, "templates/signin.html"))
 	return s
 }
 
@@ -125,8 +135,21 @@ func (s *Server) Routes(root *http.ServeMux) {
 		})
 	}
 	cop := http.NewCrossOriginProtection()
-	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(h)) }
-	post := func(pattern string, h http.HandlerFunc) { mux.Handle("POST "+pattern, s.secure(cop.Handler(h))) }
+	// 顺序：Host 白名单 → 安全头 → 跨站防护（POST）→ 登录检查 → 处理器
+	get := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(s.guard(guardPage, h))) }
+	post := func(pattern string, h http.HandlerFunc) {
+		mux.Handle("POST "+pattern, s.secure(cop.Handler(s.guard(guardForm, h))))
+	}
+	// 前端脚本 fetch 的接口和 <img> 加载的二维码：未登录时 401，不跳转
+	getAPI := func(pattern string, h http.HandlerFunc) { mux.Handle("GET "+pattern, s.secure(s.guard(guardAPI, h))) }
+	postAPI := func(pattern string, h http.HandlerFunc) {
+		mux.Handle("POST "+pattern, s.secure(cop.Handler(s.guard(guardAPI, h))))
+	}
+
+	// 不需要登录：登录页、退出（只清当前 cookie 对应的会话）、静态文件；/healthz 在 app 的根 mux 上
+	mux.Handle("GET /signin", s.secure(http.HandlerFunc(s.signinPage)))
+	mux.Handle("POST /signin", s.secure(cop.Handler(http.HandlerFunc(s.signinPost))))
+	mux.Handle("POST /signout", s.secure(cop.Handler(http.HandlerFunc(s.signout))))
 
 	get("/{$}", s.board)
 	post("/batch/run", s.batchRun)
@@ -143,12 +166,14 @@ func (s *Server) Routes(root *http.ServeMux) {
 	post("/settings/models", s.settingsModels)
 	post("/settings/providers", s.providerSave)
 	post("/settings/providers/{id}/delete", s.providerDelete)
-	post("/settings/providers/{id}/models", s.providerModels)
+	postAPI("/settings/providers/{id}/models", s.providerModels)
+	post("/settings/password", s.passwordSave)
+	post("/settings/password/signout-all", s.signoutAll)
 	get("/login", s.loginPage)
 	post("/login/start", s.loginStart)
 	post("/login/verify", s.loginVerify)
-	get("/login/status", s.loginStatus)
-	get("/login/qr.png", s.loginQR)
+	getAPI("/login/status", s.loginStatus)
+	getAPI("/login/qr.png", s.loginQR)
 	get("/media/{path...}", s.media)
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /static/", s.secure(http.StripPrefix("/static/", http.FileServerFS(sub))))
@@ -176,6 +201,9 @@ type Page struct {
 	Msg   string // 操作结果提示
 	Error string // 校验错误
 	Top   TopStatus
+
+	NoPassword bool // 还没设网页密码：顶栏下方提示
+	SignedIn   bool // 设了密码且已登录：显示「退出」
 }
 
 // TopStatus 是顶栏右侧的状态：微信连接、下次整理、立即整理。
@@ -215,17 +243,20 @@ func (s *Server) topStatus(r *http.Request) TopStatus {
 }
 
 var messages = map[string]string{
-	"started": "已开始整理，稍后刷新查看结果。",
-	"busy":    "正在整理中，请稍后再试。",
-	"saved":   "已保存。",
-	"deep":    "已标记为深入研究，下次整理时处理。",
-	"deepnow": "已标记为深入研究，并开始整理。",
-	"status":  "状态已更新。",
-	"deleted": "已删除。",
+	"started":   "已开始整理，稍后刷新查看结果。",
+	"busy":      "正在整理中，请稍后再试。",
+	"saved":     "已保存。",
+	"deep":      "已标记为深入研究，下次整理时处理。",
+	"deepnow":   "已标记为深入研究，并开始整理。",
+	"status":    "状态已更新。",
+	"deleted":   "已删除。",
+	"pwset":     "密码已设置，当前浏览器已登录。",
+	"pwchanged": "密码已修改，其他设备的登录已全部失效。",
 }
 
 func (s *Server) page(r *http.Request, title, nav string) Page {
-	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")], Top: s.topStatus(r)}
+	a := authFrom(r.Context())
+	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")], Top: s.topStatus(r), NoPassword: !a.Enabled, SignedIn: a.SignedIn}
 }
 
 // subPage 是挂在设置小节导航下的页面（微信登录、用量）。
@@ -258,12 +289,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// safeBack 只接受站内相对路径，防止表单里的 back 被利用来跳到外站。
+// safeBack 只接受站内相对路径，防止表单里的 back、登录页的 next 被利用来跳到外站。
+// 控制字符一律拒绝：浏览器解析地址时会删掉制表符和换行，"/\t/evil.com" 会变成 "//evil.com"。
 func safeBack(v string) string {
-	if strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//") && !strings.ContainsAny(v, "\\\r\n") {
-		return v
+	if !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.ContainsRune(v, '\\') {
+		return "/"
 	}
-	return "/"
+	for _, c := range v {
+		if c < 0x20 || c == 0x7f {
+			return "/"
+		}
+	}
+	return v
 }
 
 func withMsg(path, msg string) string {

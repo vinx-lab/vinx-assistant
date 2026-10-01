@@ -4,6 +4,7 @@
 {{range settingGroups}}<p class="group-t">{{.Name}}</p>
 <div class="group">{{range .Sections}}<a href="{{base}}{{.Href}}"><span class="ico">{{template "i" .Icon}}</span>{{.Name}}<span class="v">{{index $.Index .Key}}</span>{{template "i" "chev"}}</a>{{end}}</div>
 {{end}}
+{{if .SignedIn}}<form method="post" action="{{base}}/signout" class="m-signout"><button type="submit" class="btn">退出登录</button></form>{{end}}
 </div>
 {{end}}
 <div class="section-body{{if .IsIndex}} desk-only{{end}}">
@@ -95,6 +96,35 @@
   </div>
   <label>操作词表 <small>每行「操作词=指令」，指令：done postpone reschedule cancel list undo</small><textarea name="action_words" rows="8">{{.ActionWords}}</textarea></label>
   <div class="form-foot"><button type="submit" class="btn primary">保存</button></div>
+</form>
+{{end}}
+
+{{else if eq .Section "password"}}
+{{if .HasPassword}}
+<form method="post" action="{{base}}/settings/password" class="card stack">
+  <h2>修改密码</h2>
+  <p class="hint">改完后其他设备的登录全部失效，当前设备保持登录。忘记密码时在服务器上运行 <code>vinx-assistant password</code> 重置。</p>
+  <label>当前密码<input name="current" type="password" autocomplete="current-password" required></label>
+  <div class="grid2">
+    <label>新密码 <small>至少 8 位</small><input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+  </div>
+  <div class="form-foot"><button type="submit" class="btn primary">修改密码</button></div>
+</form>
+<form method="post" action="{{base}}/settings/password/signout-all" class="card stack">
+  <h2>退出所有设备</h2>
+  <p class="hint">所有浏览器（包括这一个）的登录都会失效，需要重新输入密码。</p>
+  <div class="form-foot start"><button type="submit" class="btn danger" data-confirm="退出所有设备的登录，包括当前这个？">退出所有设备</button></div>
+</form>
+{{else}}
+<form method="post" action="{{base}}/settings/password" class="card stack">
+  <h2>设置密码</h2>
+  <p class="hint">设置后打开网页要先输入密码，登录保持 30 天。当前浏览器设置后直接处于登录状态。</p>
+  <div class="grid2">
+    <label>新密码 <small>至少 8 位</small><input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
+    <label>再输一次<input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label>
+  </div>
+  <div class="form-foot"><button type="submit" class="btn primary">设置密码</button></div>
 </form>
 {{end}}
 

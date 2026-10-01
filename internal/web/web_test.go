@@ -1,14 +1,17 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +33,8 @@ type env struct {
 	ilink *ilinktest.Server
 	srv   *httptest.Server
 	media string // 媒体目录（<tmp>/media）
+	web   *Server
+	logs  *syncBuf
 
 	batches atomic.Int32 // BatchNow 成功启动的次数
 	running atomic.Bool  // 模拟「正在整理」
@@ -52,7 +57,9 @@ func newEnvBase(t *testing.T, base string) *env {
 	e.ilink = ilinktest.New()
 	t.Cleanup(e.ilink.Close)
 	e.media = filepath.Join(dir, "media")
+	e.logs = &syncBuf{}
 	d := Deps{
+		Log:   slog.New(slog.NewTextHandler(e.logs, nil)),
 		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: e.media, BasePath: base,
 		BatchNow: func() bool {
 			if e.running.Load() {
@@ -78,10 +85,30 @@ func newEnvBase(t *testing.T, base string) *env {
 		},
 	}
 	mux := http.NewServeMux()
-	New(d).Routes(mux)
+	e.web = New(d)
+	e.web.iter = 1000 // 测试里不用 60 万次迭代
+	e.web.Routes(mux)
 	e.srv = httptest.NewServer(mux)
 	t.Cleanup(e.srv.Close)
 	return e
+}
+
+// syncBuf 是并发安全的日志缓冲。
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }
 
 // client 不跟随跳转，方便检查 303。
@@ -160,7 +187,8 @@ func eventually(t *testing.T, cond func() bool) {
 }
 
 func TestSafeBack(t *testing.T) {
-	cases := map[string]string{"/?cat=todo": "/?cat=todo", "//evil.example": "/", "https://evil.example": "/", "/a\\b": "/", "": "/"}
+	cases := map[string]string{"/?cat=todo": "/?cat=todo", "//evil.example": "/", "https://evil.example": "/", "/a\\b": "/", "": "/",
+		"/\t/evil.example": "/", "/\n/evil.example": "/", "/a\x7fb": "/", "javascript:alert(1)": "/", "/items/1?x=%2F%2F": "/items/1?x=%2F%2F"}
 	for in, want := range cases {
 		if got := safeBack(in); got != want {
 			t.Errorf("safeBack(%q) = %q", in, got)

@@ -115,7 +115,10 @@
   var active = ['waiting', 'scanned', 'need_verify'];
   if (active.indexOf(box.getAttribute('data-login-state')) < 0) return;
   var timer = setInterval(function () {
-    fetch(base + '/login/status', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) {
+    fetch(base + '/login/status', { cache: 'no-store' }).then(function (r) {
+      if (r.status === 401) { clearInterval(timer); location.reload(); throw new Error('未登录'); } // 登录失效：刷新后会跳到登录页
+      return r.json();
+    }).then(function (s) {
       document.getElementById('login-msg').textContent = s.message;
       document.getElementById('login-qr-box').hidden = !s.has_qr;
       document.getElementById('login-verify').hidden = s.state !== 'need_verify';

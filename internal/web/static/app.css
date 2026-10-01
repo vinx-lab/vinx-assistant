@@ -317,6 +317,23 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 .group .ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--primary-soft); color: var(--primary); flex: none; }
 .group .ico svg.i { width: 17px; height: 17px; }
 
+/* 网页密码：未设密码提示条、退出、登录页 */
+.nopw { display: flex; align-items: flex-start; gap: 8px; margin-top: 16px; padding: 10px 14px; border-radius: 8px; background: var(--amber-soft); color: var(--amber); font-size: 13.5px; }
+.nopw svg.i { width: 16px; height: 16px; flex: none; margin-top: 3px; }
+.nopw a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.container:has(> .nopw) + .shell { padding-top: 16px; }
+.hint code { font: 12.5px var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.m-signout { margin: 24px 0 0; }
+.m-signout .btn { width: 100%; height: 48px; color: var(--warn); }
+.signin-body { display: grid; place-items: center; padding: 24px 16px; }
+.signin { width: 100%; max-width: 360px; }
+.signin .brand { justify-content: center; margin-bottom: 20px; font-size: 18px; }
+.signin .card { display: flex; flex-direction: column; gap: 14px; }
+.signin h1 { font-size: 18px; font-weight: 700; }
+.signin label { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; font-weight: 500; }
+.signin .btn { width: 100%; height: 42px; }
+.signin .error { margin: 0; }
+
 /* ---------- 手机（≤860px） ---------- */
 @media (max-width: 860px) {
   .container { padding: 0; }
@@ -413,6 +430,8 @@ legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
 
   /* 设置首页：手机上只显示分组列表 */
   .m-index { display: block; margin: -4px 0 0; }
+  .nopw { margin: 12px 16px 0; }
+  .m-signout { margin: 24px 0 8px; }
   .desk-only { display: none; }
 }
 
