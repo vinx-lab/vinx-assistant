@@ -53,7 +53,7 @@ type Server struct {
 	login *loginManager
 }
 
-var pageNames = []string{"login"}
+var pageNames = []string{"login", "settings"}
 
 func New(d Deps) *Server {
 	if d.Log == nil {
@@ -84,6 +84,12 @@ func (s *Server) Routes(mux *http.ServeMux) {
 
 	// 计划 4 Task 3 把这里换成看板。
 	get("/{$}", func(w http.ResponseWriter, r *http.Request) { redirect(w, r, "/login") })
+	get("/settings", s.settingsPage)
+	post("/settings/general", s.settingsGeneral)
+	post("/settings/models", s.settingsModels)
+	post("/settings/providers", s.providerSave)
+	post("/settings/providers/{id}/delete", s.providerDelete)
+	post("/settings/providers/{id}/models", s.providerModels)
 	get("/login", s.loginPage)
 	post("/login/start", s.loginStart)
 	post("/login/verify", s.loginVerify)

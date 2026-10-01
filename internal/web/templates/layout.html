@@ -12,6 +12,7 @@
   <a class="brand" href="/">Vinx 助手</a>
   <nav>
     {{/* 计划 4 Task 3–7 恢复：看板、搜索、用量、设置 */}}
+    <a href="/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>设置</a>
     <a href="/login" {{if eq .Nav "login"}}aria-current="page"{{end}}>微信</a>
   </nav>
 </header>

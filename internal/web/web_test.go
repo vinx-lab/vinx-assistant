@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +15,12 @@ import (
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink/ilinktest"
+	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
 )
+
+const secretKey = "sk-very-secret-key-1234567890"
 
 type env struct {
 	st    *store.Store
@@ -41,6 +46,12 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(e.ilink.Close)
 	d := Deps{
 		Store: e.st, Session: e.sess, Clock: e.clk, MediaDir: filepath.Join(dir, "media"),
+		ListModels: func(ctx context.Context, p model.Provider) ([]string, error) {
+			if p.Name == "坏的" {
+				return nil, errors.New("HTTP 401: invalid key " + p.APIKey)
+			}
+			return []string{"m-small", "m-large"}, nil
+		},
 		NewLogin: func() *ilink.Login {
 			l := ilink.NewLogin(nil)
 			l.BaseURL, l.PollDelay = e.ilink.URL, time.Millisecond

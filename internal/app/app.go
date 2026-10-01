@@ -18,6 +18,8 @@ import (
 	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/ingest"
+	"github.com/vinx-lab/vinx-assistant/internal/llm"
+	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/notify"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
@@ -78,6 +80,9 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 	})
 	web.Register(a.Mux, web.Deps{
 		Store: st, Session: a.Session, Clock: a.Clock, MediaDir: cfg.MediaDir(), Log: log,
+		ListModels: func(ctx context.Context, p model.Provider) ([]string, error) {
+			return llm.New(p.BaseURL, p.APIKey, hc).Models(ctx)
+		},
 		NewLogin: func() *ilink.Login { return ilink.NewLogin(hc) },
 	})
 	// 计划 2–4 在这里追加装配。
