@@ -162,6 +162,7 @@ func (s *Server) Routes(root *http.ServeMux) {
 	post("/items/{id}/status", s.itemStatus)
 	post("/items/{id}/deep", s.itemDeep)
 	post("/items/{id}/delete", s.itemDelete)
+	postAPI("/items/{id}/field", s.itemField)
 	get("/items/{id}", s.itemPage)
 	post("/items/{id}", s.itemSave)
 	get("/search", s.search)
@@ -324,6 +325,13 @@ func withMsg(path, msg string) string {
 	return path + sep + "msg=" + msg
 }
 
+// tagRowData 是详情页一行可编辑标签（见 item.html 的 tagrow）。
+type tagRowData struct {
+	Kind string // labels / topics
+	Tags []string
+	Cat  model.Category
+}
+
 // redirect 303 到站内地址 to（不带前缀），Location 里加上 BasePath。
 func (s *Server) redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, s.d.BasePath+to, http.StatusSeeOther)
@@ -331,9 +339,13 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request, to string) {
 
 func (s *Server) funcs() template.FuncMap {
 	return template.FuncMap{
-		"base":       func() string { return s.d.BasePath },
-		"display":    func(it model.Item) string { return it.DisplayTitle() },
-		"catName":    model.CategoryName,
+		"base":    func() string { return s.d.BasePath },
+		"display": func(it model.Item) string { return it.DisplayTitle() },
+		"catName": model.CategoryName,
+		// tagRow 打包详情页一行可编辑标签的数据（kind 是 labels 或 topics）
+		"tagRow": func(kind string, tags []string, cat model.Category) tagRowData {
+			return tagRowData{Kind: kind, Tags: tags, Cat: cat}
+		},
 		"statusName": model.StatusName,
 		"prioName":   func(p model.Priority) string { return priorityNames[p] },
 		"due": func(it model.Item) string {

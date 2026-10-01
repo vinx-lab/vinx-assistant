@@ -24,7 +24,7 @@
   <div class="form-foot start">
     <button type="submit" class="btn primary">保存</button>
     <button type="button" class="btn" data-models="{{.ID}}">拉取模型列表</button>
-    <button type="submit" formaction="{{base}}/settings/providers/{{.ID}}/delete" data-confirm="删除这个服务商？" class="btn danger">删除</button>
+    <button type="submit" formaction="{{base}}/settings/providers/{{.ID}}/delete" data-confirm="删除这个服务商？" data-confirm-ok="删除" class="btn danger">删除</button>
   </div>
 </form>
 {{end}}
@@ -106,7 +106,7 @@
   <p class="hint">打开网页要先登录，登录保持 30 天。登录页优先用微信验证码：页面上显示 6 位数字，在微信里发给 Bot 即可{{if .HasPassword}}；也可以用密码{{end}}。</p>
   <form method="post" action="{{base}}/settings/login" class="form-foot start">
     <input type="hidden" name="on" value="0">
-    <button type="submit" class="btn danger" data-confirm="关闭后，能访问到这个网址的人都能查看和修改全部内容。确定关闭？">关闭登录要求</button>
+    <button type="submit" class="btn danger" data-confirm="关闭后，能访问到这个网址的人都能查看和修改全部内容。确定关闭？" data-confirm-ok="关闭">关闭登录要求</button>
   </form>
   {{else}}
   <p class="hint">开启后打开网页要先登录。可用的登录方式：微信验证码（{{if .WeChatBound}}已绑定微信{{else}}还没绑定微信，见 <a href="{{base}}/login">微信登录</a>{{end}}）、密码（{{if .HasPassword}}已设置{{else}}未设置{{end}}）。至少要有一种才能开启；开启时当前浏览器保持登录。</p>
@@ -142,7 +142,7 @@
 <form method="post" action="{{base}}/settings/password/signout-all" class="card stack">
   <h2>退出所有设备</h2>
   <p class="hint">所有浏览器（包括这一个）的登录都会失效，需要重新登录。</p>
-  <div class="form-foot start"><button type="submit" class="btn danger" data-confirm="退出所有设备的登录，包括当前这个？">退出所有设备</button></div>
+  <div class="form-foot start"><button type="submit" class="btn danger" data-confirm="退出所有设备的登录，包括当前这个？" data-confirm-ok="退出">退出所有设备</button></div>
 </form>
 {{end}}
 
@@ -153,7 +153,7 @@
   <label class="field"><span class="sr-only">提示词</span><textarea name="prompt" rows="18" spellcheck="false">{{.Prompt}}</textarea></label>
   <div class="form-foot start">
     <button type="submit" class="btn primary">保存</button>
-    <button type="submit" name="reset" value="1" data-confirm="恢复为内置默认提示词？当前修改会丢失。" class="btn ghost">恢复默认</button>
+    <button type="submit" name="reset" value="1" data-confirm="恢复为内置默认提示词？当前修改会丢失。" data-confirm-ok="恢复默认" class="btn ghost">恢复默认</button>
   </div>
 </form>
 <details class="card preview">

@@ -37,7 +37,7 @@ func TestDeleteItemWeb(t *testing.T) {
 	path := "/items/" + sid
 
 	_, body := e.get(t, path)
-	mustContain(t, body, `action="/items/`+sid+`/delete"`, `data-confirm="删除后无法恢复，确定删除？"`, "删除这条记录")
+	mustContain(t, body, `action="/items/`+sid+`/delete"`, `data-confirm="删除后无法恢复，确定删除？" data-confirm-ok="删除">删除</button>`) // 按钮文字改为「删除」，确认弹窗的按钮也是「删除」
 	_, body = e.get(t, "/")
 	mustContain(t, body, `/items/`+sid+`/delete`, `data-confirm="删除后无法恢复，确定删除？"`)
 

@@ -25,43 +25,34 @@ func splitTags(s string) []string {
 	})
 }
 
-// applyEdit 把详情页表单写进条目，返回规范化后的类别标签和内容标签。出错时不修改条目。
-// 不允许手动把已整理的条目改回「未整理」：批处理会一直重新处理它（计划 2 评审结论）。
-func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) {
-	cat := model.Category(f.Category)
+// 下面几个 parse/set 函数供整表保存（applyEdit）和按字段保存（itemField）共用，校验规则只写一处。
+
+// parseCategory 校验分类。不允许手动把已整理的条目改回「未整理」：批处理会一直重新处理它（计划 2 评审结论）。
+func parseCategory(it *model.Item, v string) (model.Category, error) {
+	cat := model.Category(v)
 	if !model.ValidCategory(cat) {
-		return nil, nil, badInput{"分类不对"}
+		return "", badInput{"分类不对"}
 	}
 	if cat == model.CatInbox && it.Category != model.CatInbox {
-		return nil, nil, badInput{"不能手动改回未整理"}
+		return "", badInput{"不能手动改回未整理"}
 	}
-	title := strings.TrimSpace(f.Title)
+	return cat, nil
+}
+
+func setCategory(it *model.Item, cat model.Category) {
+	if cat != it.Category {
+		it.Category, it.CategoryBy = cat, model.ByManual
+		if !model.ValidStatus(cat, it.Status) {
+			it.Status = model.DefaultStatus(cat)
+		}
+	}
+}
+
+// setTitle 写标题：最多 60 字；清空表示交回 AI 生成（TitleBy 置空）。
+func setTitle(it *model.Item, v string) {
+	title := strings.TrimSpace(v)
 	if r := []rune(title); len(r) > 60 {
 		title = strings.TrimSpace(string(r[:60]))
-	}
-	prio := model.Priority(f.Priority)
-	if _, ok := priorityNames[prio]; !ok {
-		return nil, nil, badInput{"优先级不对"}
-	}
-	var due *time.Time
-	hasTime := false
-	switch {
-	case f.DueDate == "" && f.DueTime != "":
-		return nil, nil, badInput{"填了时刻就要填日期"}
-	case f.DueDate != "":
-		d, err := time.ParseInLocation("2006-01-02", f.DueDate, clock.Zone)
-		if err != nil {
-			return nil, nil, badInput{"日期格式不对"}
-		}
-		if f.DueTime != "" {
-			hm, err := time.ParseInLocation("15:04", f.DueTime, clock.Zone)
-			if err != nil {
-				return nil, nil, badInput{"时刻格式不对"}
-			}
-			d = d.Add(time.Duration(hm.Hour())*time.Hour + time.Duration(hm.Minute())*time.Minute)
-			hasTime = true
-		}
-		due = &d // 只有日期时就是当天 00:00（全局约定）
 	}
 	if title != it.Title {
 		it.Title = title
@@ -70,23 +61,69 @@ func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) 
 			it.TitleBy = "manual"
 		}
 	}
-	if cat != it.Category {
-		it.Category, it.CategoryBy = cat, model.ByManual
-		if !model.ValidStatus(cat, it.Status) {
-			it.Status = model.DefaultStatus(cat)
-		}
+}
+
+func parsePriority(v string) (model.Priority, error) {
+	prio := model.Priority(v)
+	if _, ok := priorityNames[prio]; !ok {
+		return "", badInput{"优先级不对"}
 	}
+	return prio, nil
+}
+
+// parseDue 解析截止日期和可选的时刻；日期为空表示没有截止时间。只有日期时就是当天 00:00（全局约定）。
+func parseDue(date, hm string) (due *time.Time, hasTime bool, err error) {
+	date, hm = strings.TrimSpace(date), strings.TrimSpace(hm)
+	switch {
+	case date == "" && hm != "":
+		return nil, false, badInput{"填了时刻就要填日期"}
+	case date == "":
+		return nil, false, nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", date, clock.Zone)
+	if err != nil {
+		return nil, false, badInput{"日期格式不对"}
+	}
+	if hm != "" {
+		t, err := time.ParseInLocation("15:04", hm, clock.Zone)
+		if err != nil {
+			return nil, false, badInput{"时刻格式不对"}
+		}
+		d = d.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute)
+		hasTime = true
+	}
+	return &d, hasTime, nil
+}
+
+// applyEdit 把详情页整表表单写进条目，返回规范化后的类别标签和内容标签。出错时不修改条目。
+func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) {
+	cat, err := parseCategory(it, f.Category)
+	if err != nil {
+		return nil, nil, err
+	}
+	prio, err := parsePriority(f.Priority)
+	if err != nil {
+		return nil, nil, err
+	}
+	due, hasTime, err := parseDue(f.DueDate, f.DueTime)
+	if err != nil {
+		return nil, nil, err
+	}
+	setTitle(it, f.Title)
+	setCategory(it, cat)
 	it.Priority, it.DueAt, it.DueHasTime = prio, due, hasTime
 	return model.NormalizeTags(splitTags(f.Labels)), model.NormalizeTags(splitTags(f.Topics)), nil
 }
 
 type itemData struct {
 	Page
-	Item       *model.Item
-	Atts       []model.Attachment
-	Categories []model.Category
-	Priorities []model.Priority
-	Form       editForm
+	Item *model.Item
+	// AllLabels、AllTopics 是已有的两类标签，供原地编辑时加标签的自动补全
+	AllLabels, AllTopics []store.TagCount
+	Atts                 []model.Attachment
+	Categories           []model.Category
+	Priorities           []model.Priority
+	Form                 editForm
 }
 
 func formOf(it *model.Item) editForm {
@@ -123,6 +160,14 @@ func (s *Server) renderItem(w http.ResponseWriter, r *http.Request, status int, 
 		Categories: editCategories(it.Category),
 		Priorities: []model.Priority{model.PriorityNone, model.PriorityHigh, model.PriorityMedium, model.PriorityLow}}
 	d.Error = errMsg
+	if d.AllLabels, err = s.d.Store.AllTags(r.Context(), store.TagKindLabel); err != nil {
+		s.fail(w, err)
+		return
+	}
+	if d.AllTopics, err = s.d.Store.AllTags(r.Context(), store.TagKindTopic); err != nil {
+		s.fail(w, err)
+		return
+	}
 	s.render(w, status, "item", d)
 }
 

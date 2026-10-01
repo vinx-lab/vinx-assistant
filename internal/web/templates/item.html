@@ -1,18 +1,41 @@
 {{define "content"}}
 {{with .Item}}
 <p class="crumb"><a href="{{base}}/?cat={{.Category}}">{{template "i" "back"}}返回{{catName .Category}}</a></p>
-<article class="card detail">
+{{/* 原地编辑：有脚本时标题、属性条、标签都可以直接改，逐个字段 POST {base}/items/{id}/field；没有脚本时用页面下方 <noscript> 里的整表表单 */}}
+<article class="card detail" data-field-url="{{base}}/items/{{.ID}}/field" data-item-id="{{.ID}}" data-board="{{base}}/">
   <div class="detail-head">
     <span class="kind-ico" title="{{catName .Category}}">{{template "i" (catIcon .Category)}}</span>
-    <h1 class="detail-title">#{{.ID}} {{display .}}</h1>
+    <h1 class="detail-title" data-title="{{.Title}}" title="双击修改标题">#{{.ID}} {{display .}}</h1>
+    <button type="button" class="icon-btn pen js-only" data-edit-title aria-label="改标题">{{template "i" "pen"}}</button>
   </div>
+  <div class="propbar js-only" role="group" aria-label="属性">
+    <label class="pill pill-select" title="分类"><span class="sr-only">分类</span><select data-field="category">{{range $.Categories}}<option value="{{.}}" {{if eq . $.Item.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select></label>
+    <label class="pill pill-select" title="优先级"><span class="sr-only">优先级</span><select data-field="priority">{{range $.Priorities}}<option value="{{.}}" {{if eq . $.Item.Priority}}selected{{end}}>{{if .}}优先级 {{prioName .}}{{else}}无优先级{{end}}</option>{{end}}</select></label>
+    <details class="pop due-pop">
+      <summary class="pill{{if overdue .}} is-over{{end}}" data-due-pill>{{template "i" "cal"}}<span data-due-text>{{if .DueAt}}截止 {{due .}}{{if overdue .}} 逾期{{end}}{{else}}加截止时间{{end}}</span></summary>
+      <div class="popover" role="group" aria-label="截止时间">
+        <label class="field">日期<input type="date" data-due-date value="{{$.Form.DueDate}}"></label>
+        <label class="field">时刻 <small>可不填</small><input type="time" data-due-time value="{{$.Form.DueTime}}"></label>
+        <div class="pop-foot"><button type="button" class="btn ghost" data-due-clear>清除</button><button type="button" class="btn primary" data-due-save>保存</button></div>
+      </div>
+    </details>
+    <span class="prop-text" data-status-text>{{statusName .Status}}</span>
+    <span class="prop-text">收到于 {{fmtTime .CreatedAt}}</span>
+  </div>
+  <div class="tagedit js-only">
+    {{template "tagrow" (tagRow "labels" .Labels .Category)}}
+    {{template "tagrow" (tagRow "topics" .Topics .Category)}}
+  </div>
+  <p class="field-err" role="alert" data-field-err hidden></p>
+  <noscript>
   <div class="meta">
     <span class="st">{{catName .Category}}</span><span class="sep" aria-hidden="true"></span><span class="st">{{statusName .Status}}</span>
-    {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">{{template "i" "cal"}}截止 {{due .}}{{if overdue .}} 逾期{{end}}</span>{{end}}
+    {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}{{if overdue .}} 逾期{{end}}</span>{{end}}
     {{if .Priority}}<span class="prio prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
     <span>收到于 {{fmtTime .CreatedAt}}</span>
   </div>
   {{if or .Labels .Topics}}<div class="chips tags-line">{{range .Labels}}<a class="chip label" href="{{base}}/?cat={{$.Item.Category}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="chip topic" href="{{base}}/?cat={{$.Item.Category}}&tag={{.}}">#{{.}}</a>{{end}}</div>{{end}}
+  </noscript>
   {{if .URL}}<p class="link-card"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{template "i" "link"}}<span>{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</span></a>{{if .LinkDesc}}<small>{{.LinkDesc}}</small>{{end}}</p>{{end}}
   {{if .Summary}}<p class="lead">{{.Summary}}</p>{{end}}
   {{if .ProcessError}}<p class="error">AI 处理失败（第 {{.ProcessAttempts}} 次）：{{.ProcessError}}</p>{{end}}
@@ -20,6 +43,8 @@
   <h2 class="sub">原文</h2>
   <pre class="raw">{{.RawText}}</pre>
 </article>
+<datalist id="dl-labels">{{range $.AllLabels}}<option value="{{.Name}}"></option>{{end}}</datalist>
+<datalist id="dl-topics">{{range $.AllTopics}}<option value="{{.Name}}"></option>{{end}}</datalist>
 {{end}}
 
 {{if .Atts}}
@@ -37,8 +62,10 @@
 </section>
 {{end}}
 
-<section class="card">
+<noscript>
+<section class="card edit-form">
   <h2>修改</h2>
+  <p class="desc">浏览器没有开启脚本，在这里整体修改；开启脚本后可以直接在上面点选修改。</p>
   <form method="post" action="{{base}}/items/{{.Item.ID}}" class="stack">
     <input type="hidden" name="updated_at" value="{{.Item.UpdatedAt.Unix}}">
     <label class="full">标题 <small>留空则由 AI 生成</small><input name="title" maxlength="60" value="{{.Form.Title}}" placeholder="{{display .Item}}"></label>
@@ -57,6 +84,7 @@
     <div class="form-foot"><button type="submit" class="btn primary">保存</button></div>
   </form>
 </section>
+</noscript>
 {{if ne .Item.Level "deep"}}
 <section class="card">
   <h2>深入研究</h2>
@@ -72,7 +100,19 @@
   <h2>危险操作</h2>
   <p class="desc">连同附件一起永久删除。</p>
   <form method="post" action="{{base}}/items/{{.Item.ID}}/delete" class="inline">
-    <button type="submit" class="btn danger" data-confirm="删除后无法恢复，确定删除？">删除这条记录</button>
+    <button type="submit" class="btn danger" data-confirm="删除后无法恢复，确定删除？" data-confirm-ok="删除">删除</button>
   </form>
 </section>
 {{end}}
+
+{{/* 一行可编辑的标签：类别标签实心、内容标签描边带 #；每个带 × 删除，末尾「+」添加（自动补全已有的同类标签） */}}
+{{define "tagrow"}}<div class="tagrow" data-tags="{{.Kind}}" data-cat="{{.Cat}}">
+  {{range .Tags}}<span class="chip {{if eq $.Kind "labels"}}label{{else}}topic{{end}} ed" data-tag="{{.}}"><a href="{{base}}/?cat={{$.Cat}}&tag={{.}}">{{if eq $.Kind "topics"}}#{{end}}{{.}}</a><button type="button" class="chip-x" data-del-tag aria-label="删除{{if eq $.Kind "labels"}}类别标签{{else}}内容标签{{end}} {{.}}">{{template "i" "x"}}</button></span>{{end}}
+  <details class="pop add-pop">
+    <summary class="chip add">{{template "i" "plus"}}{{if eq .Kind "labels"}}类别标签{{else}}内容标签{{end}}</summary>
+    <form class="popover" data-add-tag>
+      <label class="field">{{if eq .Kind "labels"}}新类别标签{{else}}新内容标签{{end}}<input list="dl-{{.Kind}}" maxlength="20" autocomplete="off" enterkeyhint="done"></label>
+      <div class="pop-foot"><button type="submit" class="btn primary">添加</button></div>
+    </form>
+  </details>
+</div>{{end}}
