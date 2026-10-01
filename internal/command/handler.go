@@ -27,6 +27,13 @@ type Handler struct {
 	Clock      clock.Clock
 	Translator func(ctx context.Context) (Translator, error) // nil 或返回 nil：AI 未配置
 	Log        *slog.Logger
+
+	// 以下用于需要 AI 翻译的指令：Handle 只落库并立即返回，翻译与执行在后台（Start/Close/Wait）。
+	Reply      func(ctx context.Context, text string)              // 后台把结果回给用户（装配时接 ingest.Service.Reply）
+	SaveAsItem func(ctx context.Context, msgID, text string) error // AI 认为不是指令时把原消息存为普通条目；条目已存在返回 store.ErrDuplicate 或 nil
+	JobTimeout time.Duration                                       // 单条指令的 AI 调用超时，0 用默认 2 分钟
+
+	w worker
 }
 
 func (h *Handler) log() *slog.Logger {
@@ -72,44 +79,32 @@ func (h *Handler) Handle(ctx context.Context, in ingest.CommandInput) (string, b
 	return h.viaAI(ctx, in, hasWord, now)
 }
 
+// viaAI 处理固定格式解析不了的消息：AI 未配置时同步回用法提示；否则落库交给后台，立即返回。
 func (h *Handler) viaAI(ctx context.Context, in ingest.CommandInput, hasWord bool, now time.Time) (string, bool, error) {
-	fallback := func(why string) (string, bool, error) {
+	if h.translator(ctx) == nil {
 		if hasWord {
-			return why + Usage, true, nil
+			return "没看懂这条指令。" + Usage, true, nil
 		}
 		return "", false, nil
 	}
-	var tr Translator
-	if h.Translator != nil {
-		var err error
-		if tr, err = h.Translator(ctx); err != nil {
-			h.log().Warn("读取 AI 配置失败", "err", err)
-		}
-	}
-	if tr == nil {
-		return fallback("没看懂这条指令。")
-	}
-	todos, err := h.Store.OpenTodos(ctx, 50)
-	if err != nil {
-		return "", false, err
-	}
-	text := in.Text
-	if in.RefText != "" {
-		text += "\n（引用的消息：" + model.TruncateRunes(in.RefText, 300) + "）"
-	}
-	tl, err := tr.Translate(ctx, text, todos, now)
-	if err != nil {
-		h.log().Warn("AI 翻译指令失败", "err", err)
-		return fallback("没看懂这条指令（AI 暂时不可用）。")
-	}
-	cmd, reply, ok := fromTranslation(tl, todos, now)
-	if !ok {
+	if !hasWord && h.SaveAsItem == nil {
+		// 不像指令、AI 判为「不是指令」时又没法补存为条目：直接当普通条目，不去问 AI
 		return "", false, nil
 	}
-	if reply != "" {
-		return reply, true, nil
+	return h.enqueueAI(ctx, in, hasWord, now)
+}
+
+// translator 取当前配置的翻译器，未配置返回 nil。
+func (h *Handler) translator(ctx context.Context) Translator {
+	if h.Translator == nil {
+		return nil
 	}
-	return h.run(ctx, cmd, in, now)
+	tr, err := h.Translator(ctx)
+	if err != nil {
+		h.log().Warn("读取 AI 配置失败", "err", err)
+		return nil
+	}
+	return tr
 }
 
 // fromTranslation 校验 AI 的结果：只能操作给出的未完成待办。ok=false 表示「不是指令」。
