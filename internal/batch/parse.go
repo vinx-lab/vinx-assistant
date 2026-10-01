@@ -236,7 +236,7 @@ func apply(it *model.Item, r Result, level model.Level) {
 		it.Category = r.Category
 		it.Status = model.DefaultStatus(r.Category)
 	}
-	if r.Title != "" {
+	if r.Title != "" && it.TitleBy != "manual" {
 		it.Title = r.Title
 	}
 	if r.Summary != "" {

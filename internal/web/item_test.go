@@ -175,3 +175,46 @@ func TestItemSaveRejectsStaleForm(t *testing.T) {
 		t.Fatalf("fresh save: code %d", resp.StatusCode)
 	}
 }
+
+// 没有文字的条目：标题回退「未命名」，页面上只出现一次编号；详情页可改标题并持久化、可清除。
+func TestItemTitleEditAndUntitled(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item(t, &model.Item{MsgID: "1", Category: model.CatInbox})
+	_, body := e.get(t, "/items/1")
+	mustContain(t, body, "#1 未命名", `name="title"`, `maxlength="60"`)
+	mustNotContain(t, body, "#1 #1")
+	resp, _ := e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"title": {" 合同扫描 "}, "category": {"inbox"}}))
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("code %d", resp.StatusCode)
+	}
+	it, _ := e.st.GetItem(ctx, id)
+	if it.Title != "合同扫描" || it.TitleBy != "manual" {
+		t.Fatalf("%+v", it)
+	}
+	_, body = e.get(t, "/items/1")
+	mustContain(t, body, `value="合同扫描"`)
+	e.post(t, "/items/1", withSeen(t, e, 1, url.Values{"title": {""}, "category": {"inbox"}}))
+	it, _ = e.st.GetItem(ctx, id)
+	if it.Title != "" || it.TitleBy != "" {
+		t.Fatalf("清除后：%+v", it)
+	}
+}
+
+func TestApplyEditTitle(t *testing.T) {
+	it := &model.Item{Category: model.CatResearch, Status: model.StatusDoing, Title: "AI 标题"}
+	if _, _, err := applyEdit(it, editForm{Title: "AI 标题", Category: "research"}); err != nil || it.TitleBy != "" {
+		t.Fatalf("未改标题不应标记手动：%+v err=%v", it, err)
+	}
+	if _, _, err := applyEdit(it, editForm{Title: "  我的标题  ", Category: "research"}); err != nil || it.Title != "我的标题" || it.TitleBy != "manual" {
+		t.Fatalf("手动改标题：%+v err=%v", it, err)
+	}
+	long := strings.Repeat("长", 80)
+	applyEdit(it, editForm{Title: long, Category: "research"})
+	if n := len([]rune(it.Title)); n != 60 {
+		t.Errorf("标题应截到 60 字，实际 %d", n)
+	}
+	if _, _, err := applyEdit(it, editForm{Title: " ", Category: "research"}); err != nil || it.Title != "" || it.TitleBy != "" {
+		t.Fatalf("空值应清除手动标题：%+v err=%v", it, err)
+	}
+}

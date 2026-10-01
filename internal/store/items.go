@@ -8,7 +8,7 @@ import (
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
 
-const itemCols = `id, created_at, updated_at, msg_id, raw_text, url, link_title, link_desc, category, category_by, level, status, title, summary, detail, priority, due_at, due_has_time, processed_level, process_error, process_attempts, tokens_used, raw_json`
+const itemCols = `id, created_at, updated_at, msg_id, raw_text, url, link_title, link_desc, category, category_by, level, status, title, title_by, summary, detail, priority, due_at, due_has_time, processed_level, process_error, process_attempts, tokens_used, raw_json`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -22,7 +22,7 @@ func scanItem(sc scanner) (*model.Item, error) {
 		prio, plvl       string
 	)
 	err := sc.Scan(&it.ID, &created, &updated, &it.MsgID, &it.RawText, &it.URL, &it.LinkTitle, &it.LinkDesc,
-		&cat, &by, &lvl, &it.Status, &it.Title, &it.Summary, &it.Detail, &prio, &due, &hasTime,
+		&cat, &by, &lvl, &it.Status, &it.Title, &it.TitleBy, &it.Summary, &it.Detail, &prio, &due, &hasTime,
 		&plvl, &it.ProcessError, &it.ProcessAttempts, &it.TokensUsed, &it.RawJSON)
 	if err != nil {
 		return nil, err
@@ -91,12 +91,12 @@ func (s *Store) InsertItem(ctx context.Context, it *model.Item) (int64, error) {
 	fillDefaults(it)
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO items (created_at, updated_at, msg_id, raw_text, url, link_title, link_desc,
-			category, category_by, level, status, title, summary, detail, priority, due_at, due_has_time,
+			category, category_by, level, status, title, title_by, summary, detail, priority, due_at, due_has_time,
 			processed_level, process_error, process_attempts, tokens_used, raw_json)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(msg_id) DO NOTHING`,
 			it.CreatedAt.Unix(), it.UpdatedAt.Unix(), it.MsgID, it.RawText, it.URL, it.LinkTitle, it.LinkDesc,
-			it.Category, it.CategoryBy, it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority,
+			it.Category, it.CategoryBy, it.Level, it.Status, it.Title, it.TitleBy, it.Summary, it.Detail, it.Priority,
 			unixOrNil(it.DueAt), b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts,
 			it.TokensUsed, it.RawJSON)
 		if err != nil {
@@ -132,10 +132,10 @@ func (s *Store) UpdateItem(ctx context.Context, it *model.Item) error {
 	it.UpdatedAt = s.now()
 	return s.Tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE items SET updated_at=?, raw_text=?, url=?, link_title=?, link_desc=?,
-			category=?, category_by=?, level=?, status=?, title=?, summary=?, detail=?, priority=?, due_at=?,
+			category=?, category_by=?, level=?, status=?, title=?, title_by=?, summary=?, detail=?, priority=?, due_at=?,
 			due_has_time=?, processed_level=?, process_error=?, process_attempts=?, tokens_used=? WHERE id=?`,
 			it.UpdatedAt.Unix(), it.RawText, it.URL, it.LinkTitle, it.LinkDesc, it.Category, it.CategoryBy,
-			it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
+			it.Level, it.Status, it.Title, it.TitleBy, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
 			b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts, it.TokensUsed, it.ID)
 		if err != nil {
 			return err
@@ -181,10 +181,10 @@ func (s *Store) modifyTx(ctx context.Context, tx *sql.Tx, id int64, fn func(it *
 	it.ID = id
 	it.UpdatedAt = s.now()
 	if _, err := tx.ExecContext(ctx, `UPDATE items SET updated_at=?, raw_text=?, url=?, link_title=?, link_desc=?,
-		category=?, category_by=?, level=?, status=?, title=?, summary=?, detail=?, priority=?, due_at=?,
+		category=?, category_by=?, level=?, status=?, title=?, title_by=?, summary=?, detail=?, priority=?, due_at=?,
 		due_has_time=?, processed_level=?, process_error=?, process_attempts=?, tokens_used=? WHERE id=?`,
 		it.UpdatedAt.Unix(), it.RawText, it.URL, it.LinkTitle, it.LinkDesc, it.Category, it.CategoryBy,
-		it.Level, it.Status, it.Title, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
+		it.Level, it.Status, it.Title, it.TitleBy, it.Summary, it.Detail, it.Priority, unixOrNil(it.DueAt),
 		b2i(it.DueHasTime), it.ProcessedLevel, it.ProcessError, it.ProcessAttempts, it.TokensUsed, id); err != nil {
 		return nil, err
 	}

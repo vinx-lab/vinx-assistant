@@ -242,3 +242,16 @@ func TestParseItemsUnknownPriorityWarns(t *testing.T) {
 		t.Fatalf("res = %+v", res[1])
 	}
 }
+
+func TestApplyKeepsManualTitle(t *testing.T) {
+	it := &model.Item{Category: model.CatInbox, Title: "我的标题", TitleBy: "manual"}
+	apply(it, Result{Category: model.CatTodo, Title: "AI 标题"}, model.LevelLight)
+	if it.Title != "我的标题" {
+		t.Errorf("手动标题被覆盖：%q", it.Title)
+	}
+	it.TitleBy = ""
+	apply(it, Result{Category: model.CatTodo, Title: "AI 标题"}, model.LevelLight)
+	if it.Title != "AI 标题" {
+		t.Errorf("非手动标题应被覆盖：%q", it.Title)
+	}
+}

@@ -16,7 +16,7 @@ import (
 )
 
 type editForm struct {
-	Category, Labels, Topics, DueDate, DueTime, Priority string
+	Title, Category, Labels, Topics, DueDate, DueTime, Priority string
 }
 
 func splitTags(s string) []string {
@@ -34,6 +34,10 @@ func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) 
 	}
 	if cat == model.CatInbox && it.Category != model.CatInbox {
 		return nil, nil, badInput{"不能手动改回未整理"}
+	}
+	title := strings.TrimSpace(f.Title)
+	if r := []rune(title); len(r) > 60 {
+		title = strings.TrimSpace(string(r[:60]))
 	}
 	prio := model.Priority(f.Priority)
 	if _, ok := priorityNames[prio]; !ok {
@@ -59,6 +63,13 @@ func applyEdit(it *model.Item, f editForm) (labels, topics []string, err error) 
 		}
 		due = &d // 只有日期时就是当天 00:00（全局约定）
 	}
+	if title != it.Title {
+		it.Title = title
+		it.TitleBy = ""
+		if title != "" {
+			it.TitleBy = "manual"
+		}
+	}
 	if cat != it.Category {
 		it.Category, it.CategoryBy = cat, model.ByManual
 		if !model.ValidStatus(cat, it.Status) {
@@ -79,7 +90,7 @@ type itemData struct {
 }
 
 func formOf(it *model.Item) editForm {
-	f := editForm{Category: string(it.Category), Labels: strings.Join(it.Labels, "、"), Topics: strings.Join(it.Topics, "、"), Priority: string(it.Priority)}
+	f := editForm{Title: it.Title, Category: string(it.Category), Labels: strings.Join(it.Labels, "、"), Topics: strings.Join(it.Topics, "、"), Priority: string(it.Priority)}
 	if it.DueAt != nil {
 		f.DueDate = it.DueAt.In(clock.Zone).Format("2006-01-02")
 		if it.DueHasTime {
@@ -133,7 +144,7 @@ func (s *Server) itemSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f := editForm{Category: r.FormValue("category"), Labels: r.FormValue("labels"), Topics: r.FormValue("topics"), DueDate: r.FormValue("due_date"),
+	f := editForm{Title: r.FormValue("title"), Category: r.FormValue("category"), Labels: r.FormValue("labels"), Topics: r.FormValue("topics"), DueDate: r.FormValue("due_date"),
 		DueTime: r.FormValue("due_time"), Priority: r.FormValue("priority")}
 	// 表单带着打开页面时条目的 updated_at；对不上（或缺失）说明期间被改过，整表提交会覆盖那些改动，拒绝
 	seen, perr := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)

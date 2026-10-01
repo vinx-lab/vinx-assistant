@@ -47,7 +47,7 @@ func TestDisplayTitle(t *testing.T) {
 		{Item{ID: 1, Title: "标题", LinkTitle: "网页"}, "标题"},
 		{Item{ID: 2, LinkTitle: "网页"}, "网页"},
 		{Item{ID: 3, RawText: "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十多出来\n第二行"}, "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十…"},
-		{Item{ID: 4}, "#4"},
+		{Item{ID: 4}, "未命名"},
 	}
 	for _, c := range cases {
 		if got := c.it.DisplayTitle(); got != c.want {

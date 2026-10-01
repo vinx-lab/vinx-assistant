@@ -266,6 +266,22 @@ func TestModifyItemRollbackAndMissing(t *testing.T) {
 	}
 }
 
+func TestTitleByRoundTrip(t *testing.T) {
+	st, _ := openTest(t)
+	ctx := context.Background()
+	id, err := st.InsertItem(ctx, &model.Item{MsgID: "tb-1", RawText: "原文", Category: model.CatTodo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ModifyItem(ctx, id, func(x *model.Item) error { x.Title, x.TitleBy = "手改", "manual"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.GetItem(ctx, id)
+	if got.Title != "手改" || got.TitleBy != "manual" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestSetKVs(t *testing.T) {
 	st, _ := openTest(t)
 	ctx := context.Background()

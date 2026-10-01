@@ -2,7 +2,6 @@
 package model
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -134,6 +133,7 @@ type Item struct {
 	LinkDesc        string
 	Category        Category
 	CategoryBy      CategoryBy
+	TitleBy         string // "" 或 "manual"：manual 表示标题由用户手动设置，AI 整理不覆盖
 	Level           Level
 	Status          string
 	Title           string
@@ -151,7 +151,7 @@ type Item struct {
 	Topics          []string // 内容标签：AI 生成
 }
 
-// DisplayTitle 依次取标题、网页标题、原文首行前 30 个字，都没有时用编号。
+// DisplayTitle 依次取标题、网页标题、原文首行前 30 个字，都没有时用「未命名」（编号由调用方自己拼）。
 func (it *Item) DisplayTitle() string {
 	for _, s := range []string{it.Title, it.LinkTitle} {
 		if s = strings.TrimSpace(s); s != "" {
@@ -162,7 +162,7 @@ func (it *Item) DisplayTitle() string {
 		first, _, _ := strings.Cut(t, "\n")
 		return TruncateRunes(first, 30)
 	}
-	return fmt.Sprintf("#%d", it.ID)
+	return "未命名"
 }
 
 // TruncateRunes 按字符截断，截断时补「…」。

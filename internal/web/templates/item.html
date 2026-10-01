@@ -41,6 +41,7 @@
   <h2>修改</h2>
   <form method="post" action="{{base}}/items/{{.Item.ID}}" class="stack">
     <input type="hidden" name="updated_at" value="{{.Item.UpdatedAt.Unix}}">
+    <label class="full">标题 <small>留空则由 AI 生成</small><input name="title" maxlength="60" value="{{.Form.Title}}" placeholder="{{display .Item}}"></label>
     <div class="grid2">
       <label>分类
         <select name="category">{{range .Categories}}<option value="{{.}}" {{if eq (print .) $.Form.Category}}selected{{end}}>{{catName .}}</option>{{end}}</select>
