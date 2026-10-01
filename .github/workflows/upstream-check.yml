@@ -16,12 +16,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: 编译检查工具（失败即让任务失败）
+        run: go build -o "$RUNNER_TEMP/check-upstream" ./tools/check-upstream
       - id: run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          go build -o "$RUNNER_TEMP/check-upstream" ./tools/check-upstream
           "$RUNNER_TEMP/check-upstream" > report.md
           echo "code=$?" >> "$GITHUB_OUTPUT"
           cat report.md

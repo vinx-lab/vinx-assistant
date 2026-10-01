@@ -177,6 +177,9 @@ func newSections(changelog, version string) string {
 	return strings.Join(out, "\n\n")
 }
 
+// escapeMentions 把 @ 换成全角＠：报告会进 issue 正文，上游变更日志里的 @用户名 不能触发 GitHub 提及通知。
+func escapeMentions(s string) string { return strings.ReplaceAll(s, "@", "＠") }
+
 // report 返回 Markdown 报告；没有变化时返回空串。
 func report(l *Lock, u *Upstream) string {
 	var changed []string
@@ -201,7 +204,7 @@ func report(l *Lock, u *Upstream) string {
 		b.WriteString("协议相关文件没有改动（可能只是 OpenClaw 宿主适配），确认后直接 `-update`。\n\n")
 	}
 	if s := newSections(u.Changelog, l.Version); s != "" {
-		b.WriteString("### 上游变更日志\n\n" + s + "\n\n")
+		b.WriteString("### 上游变更日志\n\n" + escapeMentions(s) + "\n\n")
 	}
 	b.WriteString("### 同步步骤\n\n见 `internal/ilink/UPSTREAM.md`「同步流程」。\n")
 	return b.String()

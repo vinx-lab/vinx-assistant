@@ -13,3 +13,5 @@ file src/cdn/aes-ecb.ts 1a977439feda852fbbf15ebb7bdf8bb9dd689847
 file src/cdn/cdn-url.ts 1b77e5dd0adedaeb3f2f52d8e07eed8a4c238727
 file src/cdn/pic-decrypt.ts 34d92c29a03ecd133c94d06aa439cfc738c803d1
 file src/messaging/send.ts 0aaea1b2d9751d6b99772f1049de6b366d29f38e
+file src/monitor/monitor.ts d60f6514fdd1e6dab4e865ffe466a7245a1492db
+file src/messaging/quote-store.ts d0e3f74c770a478ebffee1a4e8e0c69e92d5237d

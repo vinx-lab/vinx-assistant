@@ -160,3 +160,13 @@ func TestParseLockRequiresCommit(t *testing.T) {
 		t.Fatal("want error for missing commit")
 	}
 }
+
+func TestReportEscapesMentions(t *testing.T) {
+	l := &Lock{Repo: "T/w", Version: "2.4.9", Commit: "c1", Files: []string{"src/api/types.ts"}, SHAs: map[string]string{"src/api/types.ts": "s2"}}
+	u := &Upstream{Version: "2.5.0", Commit: "c2", SHAs: map[string]string{"src/api/types.ts": "s2"},
+		Changelog: "## [2.5.0] - x\n\n- 感谢 @octocat 的修复\n\n## [2.4.9] - y\n\n- 旧的\n"}
+	r := report(l, u)
+	if strings.Contains(r, "@") || !strings.Contains(r, "＠octocat") {
+		t.Fatalf("report = %s", r)
+	}
+}
