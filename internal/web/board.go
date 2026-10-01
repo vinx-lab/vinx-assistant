@@ -109,10 +109,14 @@ type boardData struct {
 	// 切换和清除标签的链接，以及两个视图的条目数
 	OpenHref, DoneHref, ClearTagHref string
 	OpenCount, DoneCount             int
-	Labels, Topics                   []store.TagCount
-	Items                            []model.Item
-	Thumbs                           map[int64]string
-	Back                             string
+	Labels                           []store.TagCount // 类别标签（关键词规则产生）
+	Topics                           []store.TagCount // 内容标签（AI 整理生成）
+	// 侧栏「内容标签」：前 topicHeadN 个直接显示，其余折叠；当前筛选的标签在折叠部分时默认展开
+	TopicHead, TopicMore []store.TagCount
+	TopicMoreOpen        bool
+	Items                []model.Item
+	Thumbs               map[int64]string
+	Back                 string
 }
 
 func boardHref(cat model.Category, tag string, done bool) string {
@@ -175,7 +179,25 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	d.TopicHead, d.TopicMore, d.TopicMoreOpen = splitTopics(d.Topics, topicHeadN, tag)
 	s.render(w, http.StatusOK, "board", d)
+}
+
+// topicHeadN 是侧栏默认显示的内容标签个数。
+const topicHeadN = 15
+
+// splitTopics 把标签分成默认显示的前 n 个和折叠的其余部分；active 落在折叠部分时 open 为 true。
+func splitTopics(tags []store.TagCount, n int, active string) (head, more []store.TagCount, open bool) {
+	if len(tags) <= n {
+		return tags, nil, false
+	}
+	head, more = tags[:n], tags[n:]
+	for _, t := range more {
+		if t.Name == active {
+			open = true
+		}
+	}
+	return head, more, open
 }
 
 func (s *Server) batchRun(w http.ResponseWriter, r *http.Request) {

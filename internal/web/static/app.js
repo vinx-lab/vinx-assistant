@@ -1,4 +1,4 @@
-// Vinx 助手页面脚本：二次确认、三档模型下拉、扫码登录轮询；没有外部依赖。
+// Vinx 助手页面脚本：二次确认、三档模型下拉、侧栏展开与横滑定位、扫码登录轮询；没有外部依赖。
 (function () {
   // 1. 危险操作二次确认
   document.addEventListener('click', function (e) {
@@ -67,9 +67,15 @@
       .then(function () { b.disabled = false; });
   });
 
-  // 看板分类在手机上横向滚动：把当前分类滚到可见处（不动页面的纵向位置）
-  var cur = document.querySelector('.tabs a[aria-current]');
-  if (cur) cur.parentNode.scrollLeft = cur.offsetLeft - cur.parentNode.offsetLeft - 16;
+  // 侧栏：桌面上标签筛选默认展开（手机上折叠）；分类条、设置小节条在手机上横向滚动，把当前项滚到可见处（不动页面的纵向位置）
+  if (window.matchMedia('(min-width: 900px)').matches) {
+    document.querySelectorAll('details[data-desktop-open]').forEach(function (d) { d.open = true; });
+  } else {
+    document.querySelectorAll('.cats a[aria-current], .subnav a[aria-current]').forEach(function (cur) {
+      var strip = cur.parentNode;
+      strip.scrollLeft = cur.offsetLeft - strip.offsetLeft - 16;
+    });
+  }
 
   // 3. 扫码登录：轮询状态
   var box = document.querySelector('[data-login-state]');

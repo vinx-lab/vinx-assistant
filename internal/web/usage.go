@@ -26,7 +26,7 @@ type usageData struct {
 
 func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	d := usageData{Page: s.page(r, "用量", "usage")}
+	d := usageData{Page: s.subPage(r, "用量", "usage")}
 	st, err := s.d.Store.LoadSettings(ctx)
 	if err != nil {
 		s.fail(w, err)

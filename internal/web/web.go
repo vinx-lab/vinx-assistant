@@ -93,6 +93,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	get("/search", s.search)
 	get("/usage", s.usage)
 	get("/settings", s.settingsPage)
+	get("/settings/{section}", s.settingsPage)
 	post("/settings/general", s.settingsGeneral)
 	post("/settings/prompt", s.settingsPrompt)
 	post("/settings/models", s.settingsModels)
@@ -125,7 +126,8 @@ func (s *Server) secure(h http.Handler) http.Handler {
 // Page 是每个页面都有的数据。
 type Page struct {
 	Title string
-	Nav   string
+	Nav   string // 主导航当前项：board search settings
+	Sub   string // 设置小节导航当前项（见 settingSections）
 	Msg   string // 操作结果提示
 	Error string // 校验错误
 }
@@ -142,6 +144,13 @@ var messages = map[string]string{
 
 func (s *Server) page(r *http.Request, title, nav string) Page {
 	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")]}
+}
+
+// subPage 是挂在设置小节导航下的页面（微信登录、用量）。
+func (s *Server) subPage(r *http.Request, title, sub string) Page {
+	p := s.page(r, title, "settings")
+	p.Sub = sub
+	return p
 }
 
 func (s *Server) render(w http.ResponseWriter, status int, name string, data any) {
@@ -209,10 +218,11 @@ func (s *Server) funcs() template.FuncMap {
 			}
 			return out
 		},
-		"md":      renderMarkdown,
-		"secret":  redact.Secret,
-		"fmtTime": func(t time.Time) string { return t.In(clock.Zone).Format("2006-01-02 15:04") },
-		"join":    strings.Join,
+		"md":              renderMarkdown,
+		"settingSections": func() []settingSection { return settingSections },
+		"secret":          redact.Secret,
+		"fmtTime":         func(t time.Time) string { return t.In(clock.Zone).Format("2006-01-02 15:04") },
+		"join":            strings.Join,
 		"pct": func(v, max int64) int64 {
 			if max <= 0 {
 				return 0

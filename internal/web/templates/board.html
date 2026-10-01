@@ -1,14 +1,45 @@
+{{define "side"}}
+<nav class="cats" aria-label="分类">
+  <h2 class="side-h">分类</h2>
+  {{range .Tabs}}<a href="{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{.Name}} <b>{{.Count}}</b></a>{{end}}
+</nav>
+<details class="tagbox" data-desktop-open {{if .Tag}}open{{end}}>
+  <summary>标签筛选{{if .Tag}}<span class="tagbox-cur">：{{.Tag}}</span>{{end}}</summary>
+  <div class="tagbox-body">
+    {{if .Labels}}
+    <section class="tag-group" aria-labelledby="labels-h">
+      <h3 class="side-h" id="labels-h">类别标签</h3>
+      <div class="tags">{{range .Labels}}<a class="tag tag-label" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+    </section>
+    {{end}}
+    {{if .TopicHead}}
+    <section class="tag-group" aria-labelledby="topics-h">
+      <h3 class="side-h" id="topics-h">内容标签</h3>
+      <div class="tags">{{range .TopicHead}}<a class="tag tag-topic" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+      {{if .TopicMore}}
+      <details class="more" {{if .TopicMoreOpen}}open{{end}}>
+        <summary>展开全部（另 {{len .TopicMore}} 个）</summary>
+        <div class="tags">{{range .TopicMore}}<a class="tag tag-topic" href="{{if eq .Name $.Tag}}{{$.ClearTagHref}}{{else}}/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}{{end}}" {{if eq .Name $.Tag}}aria-current="true"{{end}}>#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>
+      </details>
+      {{end}}
+    </section>
+    {{end}}
+    {{if not (or .Labels .TopicHead)}}<p class="side-empty">还没有标签</p>{{end}}
+  </div>
+</details>
+{{end}}
+
 {{define "content"}}
 <section class="board-head" aria-label="概况">
   {{with .Status}}
   <div class="chips">
     <span class="chip key {{if .Overdue}}warn{{end}}">逾期 {{.Overdue}}</span>
     <span class="chip key">今天到期 {{.DueToday}}</span>
-    {{if eq .WeChat "ok"}}<span class="chip ok">微信正常</span>
-    {{else if eq .WeChat "paused"}}<span class="chip warn">微信暂停（-14），{{.PausedUntil}} 自动重试</span>
+    {{if eq .WeChat "ok"}}<a class="chip ok" href="/login">微信正常</a>
+    {{else if eq .WeChat "paused"}}<a class="chip warn" href="/login">微信暂停（-14），{{.PausedUntil}} 自动重试</a>
     {{else}}<a class="chip warn" href="/login">微信未登录</a>{{end}}
     {{if .NeedRelogin}}<a class="chip warn" href="/login">凭证反复失效，建议重新扫码</a>{{end}}
-    <span class="chip">今日 token {{.TokensToday}}{{if .TokenLimit}} / {{.TokenLimit}}{{else}}（不限）{{end}}</span>
+    <a class="chip" href="/usage">今日 token {{.TokensToday}}{{if .TokenLimit}} / {{.TokenLimit}}{{else}}（不限）{{end}}</a>
     {{if .Drift}}<span class="chip warn">收到 {{.Drift}} 个协议之外的字段，可能上游协议有变化，运行 make check-upstream 对照</span>{{end}}
   </div>
   {{end}}
@@ -21,16 +52,12 @@
   </div>
 </section>
 
-<nav class="tabs" aria-label="分类">
-  {{range .Tabs}}<a href="{{.Href}}" {{if .Active}}aria-current="page"{{end}}>{{.Name}} <b>{{.Count}}</b></a>{{end}}
-</nav>
 {{if or .Toggle .Tag}}
 <div class="filters">
   {{if .Toggle}}<nav class="seg" aria-label="处理状态"><a href="{{.OpenHref}}" {{if not .Done}}aria-current="page"{{end}}>未处理 <b>{{.OpenCount}}</b></a><a href="{{.DoneHref}}" {{if .Done}}aria-current="page"{{end}}>已处理 <b>{{.DoneCount}}</b></a></nav>{{end}}
-  {{if .Tag}}<span>标签「{{.Tag}}」</span><a href="{{.ClearTagHref}}">清除筛选</a>{{end}}
+  {{if .Tag}}<span class="filter-tag">标签「{{.Tag}}」<a href="{{.ClearTagHref}}">清除筛选</a></span>{{end}}
 </div>
 {{end}}
-{{if or .Labels .Topics}}<div class="tags" aria-label="标签">{{range .Labels}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}{{range .Topics}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.Name}}{{if $.Done}}&done=1{{end}}">#{{.Name}}<span class="n">{{.Count}}</span></a>{{end}}</div>{{end}}
 
 <div class="list">
 {{range .Items}}
@@ -40,10 +67,11 @@
       <h3><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a></h3>
       {{if .Summary}}<p class="summary-text">{{.Summary}}</p>{{end}}
       <p class="meta">
-        <span class="badge st">{{statusName .Status}}</span>
-        {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
         {{if .DueAt}}<span class="{{if overdue .}}overdue{{else}}due{{end}}">截止 {{due .}}</span>{{end}}
-        {{range .Labels}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">{{.}}</a>{{end}}{{range .Topics}}<a class="tag" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
+        {{if .Priority}}<span class="badge prio-{{.Priority}}">优先级 {{prioName .Priority}}</span>{{end}}
+        <span class="badge st">{{statusName .Status}}</span>
+        {{range .Labels}}<a class="tag tag-label" href="/?cat={{$.Cat}}&tag={{.}}">{{.}}</a>{{end}}
+        {{range .Topics}}<a class="tag tag-topic" href="/?cat={{$.Cat}}&tag={{.}}">#{{.}}</a>{{end}}
       </p>
       {{if .URL}}<p class="link"><a href="{{.URL}}" target="_blank" rel="noopener noreferrer nofollow">{{if .LinkTitle}}{{.LinkTitle}}{{else}}{{.URL}}{{end}}</a></p>{{end}}
     </div>
@@ -52,15 +80,15 @@
   <div class="actions">
     {{$it := .}}
     {{range statusChoices .}}
-    <form method="post" action="/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit">{{statusName .}}</button></form>
+    <form method="post" action="/items/{{$it.ID}}/status"><input type="hidden" name="back" value="{{$.Back}}"><input type="hidden" name="status" value="{{.}}"><button type="submit" class="sm">{{statusName .}}</button></form>
     {{end}}
     {{if ne .Level "deep"}}
-    <form method="post" action="/items/{{.ID}}/deep"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit" class="ghost">深入研究</button></form>
+    <form method="post" action="/items/{{.ID}}/deep" class="secondary"><input type="hidden" name="back" value="{{$.Back}}"><button type="submit" class="sm quiet">深入研究</button></form>
     {{end}}
   </div>
 </article>
 {{else}}
-<p class="empty">{{if .Done}}还没有已处理的条目。{{else}}这里还没有条目。{{end}}</p>
+<p class="empty">{{if .Done}}还没有已处理的条目。{{else if .Tag}}这个标签下没有条目。{{else}}这里还没有条目。{{end}}</p>
 {{end}}
 </div>
 {{end}}

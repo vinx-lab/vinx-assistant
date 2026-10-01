@@ -20,8 +20,8 @@ import (
 
 // generalForm 是设置页「整理与规则」表单的原始文本，校验失败时原样回显。
 type generalForm struct {
-	TokenLimit, BatchTimes, DigestTime  string
-	Images                              bool
+	TokenLimit, BatchTimes, DigestTime              string
+	Images                                          bool
 	Prefixes, LabelRules, Medium, Deep, ActionWords string
 }
 
@@ -39,38 +39,66 @@ func generalFormOf(st model.Settings) generalForm {
 	}
 }
 
-// applyGeneral 校验表单并写进 st；出错时 st 不变。
-func applyGeneral(st *model.Settings, f generalForm) error {
+// applyGeneral 校验表单并写进 st；出错时 st 不变。返回出错的小节（rules / keywords），供回显时定位。
+func applyGeneral(st *model.Settings, f generalForm) (string, error) {
 	limit, err := strconv.ParseInt(strings.TrimSpace(f.TokenLimit), 10, 64)
 	if err != nil || limit < 0 {
-		return errors.New("每日 token 上限应为不小于 0 的整数（0 表示不限）")
+		return "rules", errors.New("每日 token 上限应为不小于 0 的整数（0 表示不限）")
 	}
 	times, err := ParseTimes(f.BatchTimes)
 	if err != nil {
-		return errors.New("整理时间：" + err.Error())
+		return "rules", errors.New("整理时间：" + err.Error())
 	}
 	digest, err := ParseClock(f.DigestTime)
 	if err != nil {
-		return errors.New("每日摘要时间：" + err.Error())
+		return "rules", errors.New("每日摘要时间：" + err.Error())
 	}
 	prefixes, err := ParsePrefixes(f.Prefixes)
 	if err != nil {
-		return err
+		return "keywords", err
 	}
 	words, err := ParseActionWords(f.ActionWords)
 	if err != nil {
-		return err
+		return "keywords", err
 	}
 	labelRules, err := ParseLabelRules(f.LabelRules)
 	if err != nil {
-		return err
+		return "keywords", err
 	}
 	st.AI.DailyTokenLimit, st.AI.Images = limit, f.Images
 	st.Schedule.BatchTimes, st.Schedule.DigestTime = times, digest
 	st.Rules.Prefixes, st.Rules.ActionWords, st.Rules.LabelRules = prefixes, words, labelRules
 	st.Rules.MediumKeywords, st.Rules.DeepKeywords = ParseWords(f.Medium), ParseWords(f.Deep)
-	return nil
+	return "", nil
 }
+
+// settingSection 是设置页的一个小节。微信登录、用量是独立页面，也挂在设置的小节导航里。
+type settingSection struct {
+	Key, Name, Href string
+}
+
+var settingSections = []settingSection{
+	{"providers", "AI 服务商", "/settings"},
+	{"models", "模型", "/settings/models"},
+	{"rules", "整理与规则", "/settings/rules"},
+	{"keywords", "关键词", "/settings/keywords"},
+	{"prompt", "提示词", "/settings/prompt"},
+	{"login", "微信登录", "/login"},
+	{"usage", "用量", "/usage"},
+}
+
+// sectionHref 是设置小节的地址；未知小节回到服务商。
+func sectionHref(key string) string {
+	for _, sec := range settingSections {
+		if sec.Key == key {
+			return sec.Href
+		}
+	}
+	return "/settings"
+}
+
+// settingsPageSections 是由 settings 模板渲染的小节（不含独立页面 login、usage）。
+var settingsPageSections = map[string]string{"providers": "AI 服务商", "models": "模型", "rules": "整理与规则", "keywords": "关键词", "prompt": "提示词"}
 
 type providerView struct {
 	ID, Name, BaseURL, KeyTail string
@@ -79,6 +107,7 @@ type providerView struct {
 
 type settingsData struct {
 	Page
+	Section   string // 当前小节：providers models rules keywords prompt
 	General   generalForm
 	Providers []providerView
 	AI        model.AI
@@ -105,8 +134,10 @@ func modelOptions(models []string, cur string) []string {
 	return append([]string{cur}, models...)
 }
 
-func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status int, st model.Settings, g generalForm, errMsg string) {
-	d := settingsData{Page: s.page(r, "设置", "settings"), General: g, AI: st.AI}
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status int, section string, st model.Settings, g generalForm, errMsg string) {
+	pg := s.page(r, settingsPageSections[section], "settings")
+	pg.Sub = section
+	d := settingsData{Page: pg, Section: section, General: g, AI: st.AI}
 	d.Error = errMsg
 	for _, p := range st.AI.Providers {
 		d.Providers = append(d.Providers, providerView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, KeyTail: redact.Secret(p.APIKey), Models: p.Models})
@@ -124,40 +155,61 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status i
 	if strings.TrimSpace(d.Prompt) == "" {
 		d.Prompt = batch.DefaultPrompt
 	}
-	if topics, labels, err := batch.PromptTags(r.Context(), s.d.Store, st); err == nil {
-		d.PromptPreview = batch.PreviewPrompt(st, s.d.Clock.Now(), topics, labels, model.LevelLight)
+	if section == "prompt" { // 预览要查库里的标签，只在提示词小节生成
+		if topics, labels, err := batch.PromptTags(r.Context(), s.d.Store, st); err == nil {
+			d.PromptPreview = batch.PreviewPrompt(st, s.d.Clock.Now(), topics, labels, model.LevelLight)
+		}
 	}
 	d.AI.Providers = nil // 模板里只用 Providers（已打码），不把密钥放进模板数据
 	s.render(w, status, "settings", d)
 }
 
+// settingsPage 显示一个设置小节：/settings 是 AI 服务商，/settings/{section} 是其余小节。
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
+	section := r.PathValue("section")
+	if section == "" {
+		section = "providers"
+	}
+	if _, ok := settingsPageSections[section]; !ok {
+		http.NotFound(w, r)
+		return
+	}
 	st, err := s.d.Store.LoadSettings(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, st, generalFormOf(st), "")
+	s.renderSettings(w, r, http.StatusOK, section, st, generalFormOf(st), "")
 }
 
+// settingsGeneral 保存「整理与规则」或「关键词」小节。两个小节共用这个地址，用隐藏字段 section 区分，
+// 只取本小节的字段，其余沿用已保存的值；没有 section 时（旧表单）取全部字段。
 func (s *Server) settingsGeneral(w http.ResponseWriter, r *http.Request) {
 	st, err := s.d.Store.LoadSettings(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	f := generalForm{TokenLimit: r.FormValue("token_limit"), BatchTimes: r.FormValue("batch_times"), DigestTime: r.FormValue("digest_time"),
-		Images: r.FormValue("images") == "1", Prefixes: r.FormValue("prefixes"), Medium: r.FormValue("medium_keywords"),
-		LabelRules: r.FormValue("label_rules"), Deep: r.FormValue("deep_keywords"), ActionWords: r.FormValue("action_words")}
-	if err := applyGeneral(&st, f); err != nil {
-		s.renderSettings(w, r, http.StatusBadRequest, st, f, err.Error())
+	section := r.FormValue("section")
+	f := generalFormOf(st)
+	if section == "" || section == "rules" {
+		f.TokenLimit, f.BatchTimes, f.DigestTime, f.Images = r.FormValue("token_limit"), r.FormValue("batch_times"), r.FormValue("digest_time"), r.FormValue("images") == "1"
+	}
+	if section == "" || section == "keywords" {
+		f.Prefixes, f.LabelRules, f.Medium, f.Deep, f.ActionWords = r.FormValue("prefixes"), r.FormValue("label_rules"), r.FormValue("medium_keywords"), r.FormValue("deep_keywords"), r.FormValue("action_words")
+	}
+	if bad, err := applyGeneral(&st, f); err != nil {
+		s.renderSettings(w, r, http.StatusBadRequest, bad, st, f, err.Error())
 		return
 	}
 	if err := s.d.Store.SaveSettings(r.Context(), st); err != nil {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings?msg=saved")
+	if section == "" {
+		section = "rules"
+	}
+	redirect(w, r, withMsg(sectionHref(section), "saved"))
 }
 
 // maxPromptRunes 是提示词说明的长度上限，防止误贴大段文字撑爆每次请求。
@@ -177,7 +229,7 @@ func (s *Server) settingsPrompt(w http.ResponseWriter, r *http.Request) {
 	if utf8.RuneCountInString(prompt) > maxPromptRunes {
 		saved := st
 		st.Prompt = prompt // 只用于回显，不保存
-		s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(saved), "提示词太长（上限 "+strconv.Itoa(maxPromptRunes)+" 字）")
+		s.renderSettings(w, r, http.StatusBadRequest, "prompt", st, generalFormOf(saved), "提示词太长（上限 "+strconv.Itoa(maxPromptRunes)+" 字）")
 		return
 	}
 	st.Prompt = prompt
@@ -185,7 +237,7 @@ func (s *Server) settingsPrompt(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings?msg=saved")
+	redirect(w, r, "/settings/prompt?msg=saved")
 }
 
 func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +255,7 @@ func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
 		}
 		if pid != "" {
 			if _, ok := st.AI.Provider(pid); !ok {
-				s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "选择的服务商不存在")
+				s.renderSettings(w, r, http.StatusBadRequest, "models", st, generalFormOf(st), "选择的服务商不存在")
 				return
 			}
 		}
@@ -213,7 +265,7 @@ func (s *Server) settingsModels(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings?msg=saved")
+	redirect(w, r, "/settings/models?msg=saved")
 }
 
 func newProviderID() string {
@@ -237,7 +289,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("id")
 	name, base, key := strings.TrimSpace(r.FormValue("name")), strings.TrimSpace(r.FormValue("base_url")), strings.TrimSpace(r.FormValue("api_key"))
 	if name == "" || !validBaseURL(base) {
-		s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "服务商需要名称和 http(s) 开头的 API 地址")
+		s.renderSettings(w, r, http.StatusBadRequest, "providers", st, generalFormOf(st), "服务商需要名称和 http(s) 开头的 API 地址")
 		return
 	}
 	if id == "" {
@@ -249,7 +301,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 				p := &st.AI.Providers[i]
 				// 改了地址却沿用旧密钥，等于把密钥交给新地址（网站没有密码，别人可借此把密钥发到自己的服务器）。
 				if key == "" && p.APIKey != "" && base != p.BaseURL {
-					s.renderSettings(w, r, http.StatusBadRequest, st, generalFormOf(st), "API 地址变了，请重新填写密钥")
+					s.renderSettings(w, r, http.StatusBadRequest, "providers", st, generalFormOf(st), "API 地址变了，请重新填写密钥")
 					return
 				}
 				if base != p.BaseURL {

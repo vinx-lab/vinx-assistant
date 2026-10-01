@@ -59,7 +59,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 		Page
 		WeChat string
 		Status LoginStatus
-	}{Page: s.page(r, "微信登录", "login"), WeChat: s.d.Session.Status(r.Context()), Status: s.login.get()}
+	}{Page: s.subPage(r, "微信登录", "login"), WeChat: s.d.Session.Status(r.Context()), Status: s.login.get()}
 	s.render(w, http.StatusOK, "login", d)
 }
 

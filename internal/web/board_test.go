@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -190,4 +191,36 @@ func TestBoardOpenAndDoneViews(t *testing.T) {
 		_, body = e.get(t, "/?cat="+cat+"&done=1") // 没有已处理视图的分类忽略 done
 		mustContain(t, body, want)
 	}
+}
+
+// 侧栏内容标签默认显示前 15 个，其余折叠；当前筛选的标签在折叠部分时展开。
+func TestSplitTopics(t *testing.T) {
+	var tags []store.TagCount
+	for i := range 20 {
+		tags = append(tags, store.TagCount{Name: fmt.Sprintf("t%d", i), Count: 20 - i})
+	}
+	head, more, open := splitTopics(tags, 15, "t3")
+	if len(head) != 15 || len(more) != 5 || open {
+		t.Fatalf("head %d more %d open %v", len(head), len(more), open)
+	}
+	if _, _, open = splitTopics(tags, 15, "t17"); !open {
+		t.Fatal("active tag in folded part should open it")
+	}
+	if head, more, _ = splitTopics(tags[:3], 15, ""); len(head) != 3 || more != nil {
+		t.Fatalf("short list: %d %v", len(head), more)
+	}
+	e := newEnv(t)
+	ctx := context.Background()
+	for i := range 17 {
+		id := e.item(t, &model.Item{MsgID: fmt.Sprint(i), RawText: "x", Category: model.CatIdea})
+		e.st.SetTags(ctx, id, store.TagKindTopic, []string{fmt.Sprintf("标签%02d", i)})
+		if i == 0 {
+			e.st.SetTags(ctx, id, store.TagKindLabel, []string{"票据"})
+		}
+	}
+	_, body := e.get(t, "/?cat=idea")
+	// 类别标签实心、不带 #；内容标签描边、带 #
+	mustContain(t, body, "类别标签", "内容标签", "展开全部（另 2 个）", `<a class="tag tag-label" href="/?cat=idea&tag=%e7%a5%a8%e6%8d%ae" >票据<span class="n">1</span></a>`,
+		`class="tag tag-topic"`, ">#标签00<")
+	mustNotContain(t, body, ">#票据")
 }

@@ -1,37 +1,38 @@
 {{define "content"}}
-<section class="section">
-  <div class="section-head"><h2>AI 服务商</h2><span class="hint">OpenAI 兼容接口</span></div>
-  {{range .Providers}}
-  <form method="post" action="/settings/providers" class="panel provider">
-    <input type="hidden" name="id" value="{{.ID}}">
-    <div class="provider-head"><h3>{{.Name}}</h3><span class="chip {{if .KeyTail}}ok{{else}}warn{{end}}">密钥 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}</span></div>
-    <div class="grid2">
-      <label>名称<input name="name" value="{{.Name}}" required></label>
-      <label>API 地址<input name="base_url" value="{{.BaseURL}}" required inputmode="url"></label>
-      <label class="full">密钥 <small>当前 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}，留空不改；改了 API 地址须重填</small><input name="api_key" type="password" autocomplete="off"></label>
-    </div>
-    <p class="models-out" data-models-out="{{.ID}}" role="status">{{if .Models}}已保存 {{len .Models}} 个模型{{else}}还没有拉取模型列表{{end}}</p>
-    <div class="form-foot start">
-      <button type="submit" class="primary">保存</button>
-      <button type="button" data-models="{{.ID}}">拉取模型列表</button>
-      <button type="submit" formaction="/settings/providers/{{.ID}}/delete" data-confirm="删除这个服务商？" class="danger">删除</button>
-    </div>
+{{if eq .Section "providers"}}
+<p class="hint lede">OpenAI 兼容接口。密钥只存在本机数据库里，页面上只显示末尾几位。</p>
+{{range .Providers}}
+<form method="post" action="/settings/providers" class="panel provider">
+  <input type="hidden" name="id" value="{{.ID}}">
+  <div class="provider-head"><h2>{{.Name}}</h2><span class="chip {{if .KeyTail}}ok{{else}}warn{{end}}">密钥 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}</span></div>
+  <div class="grid2">
+    <label>名称<input name="name" value="{{.Name}}" required></label>
+    <label>API 地址<input name="base_url" value="{{.BaseURL}}" required inputmode="url"></label>
+    <label class="full">密钥 <small>当前 {{if .KeyTail}}{{.KeyTail}}{{else}}未设置{{end}}，留空不改；改了 API 地址须重填</small><input name="api_key" type="password" autocomplete="off"></label>
+  </div>
+  <p class="models-out" data-models-out="{{.ID}}" role="status">{{if .Models}}已保存 {{len .Models}} 个模型{{else}}还没有拉取模型列表{{end}}</p>
+  <div class="form-foot start">
+    <button type="submit" class="primary">保存</button>
+    <button type="button" data-models="{{.ID}}">拉取模型列表</button>
+    <button type="submit" formaction="/settings/providers/{{.ID}}/delete" data-confirm="删除这个服务商？" class="danger">删除</button>
+  </div>
+</form>
+{{end}}
+<details class="panel add-provider" {{if not .Providers}}open{{end}}>
+  <summary>添加服务商</summary>
+  <form method="post" action="/settings/providers" class="stack">
+    <label>名称<input name="name" required></label>
+    <label>API 地址 <small>OpenAI 兼容，程序会自动补 /v1；DeepSeek 示例：名称「DeepSeek」，地址 https://api.deepseek.com</small><input name="base_url" required inputmode="url"></label>
+    <label>密钥<input name="api_key" type="password" autocomplete="off"></label>
+    <div class="form-foot"><button type="submit" class="primary">添加</button></div>
   </form>
-  {{end}}
-  <details class="panel add-provider" {{if not .Providers}}open{{end}}>
-    <summary>添加服务商</summary>
-    <form method="post" action="/settings/providers" class="stack">
-      <label>名称<input name="name" required></label>
-      <label>API 地址 <small>OpenAI 兼容，程序会自动补 /v1；DeepSeek 示例：名称「DeepSeek」，地址 https://api.deepseek.com</small><input name="base_url" required inputmode="url"></label>
-      <label>密钥<input name="api_key" type="password" autocomplete="off"></label>
-      <div class="form-foot"><button type="submit" class="primary">添加</button></div>
-    </form>
-  </details>
-</section>
+</details>
 
+{{else if eq .Section "models"}}
 <section class="panel">
   <h2>三档模型</h2>
   <p class="hint">三档建议都用 deepseek-chat；deepseek-reasoner 的 max_tokens 含思考过程，轻量档容易被截断。模型下拉来自服务商的「拉取模型列表」。</p>
+  {{if not .Providers}}<p class="hint">还没有服务商，先到 <a href="/settings">AI 服务商</a> 添加。</p>{{end}}
   <form method="post" action="/settings/models" class="stack">
     <div class="tiers">
     {{range .Levels}}
@@ -57,24 +58,50 @@
   </form>
 </section>
 
-<section class="panel">
-  <h2>整理与规则</h2>
-  {{with .General}}
-  <form method="post" action="/settings/general" class="stack">
-    <div class="grid2">
-      <label>每日 token 上限 <small>0 表示不限</small><input name="token_limit" inputmode="numeric" value="{{.TokenLimit}}"></label>
-      <label>每日摘要时间<input name="digest_time" value="{{.DigestTime}}" inputmode="numeric"></label>
-      <label class="full">整理时间 <small>多个用空格分隔，如 08:00 20:00</small><input name="batch_times" value="{{.BatchTimes}}"></label>
-    </div>
-    <label class="check"><input type="checkbox" name="images" value="1" {{if .Images}}checked{{end}}> 把图片交给 AI 看（低清晰度）</label>
-    <label>分类关键词 <small>每行一条：关键词=分类（分类写代码或中文名），消息里任何位置出现即归类并打标签</small><textarea name="prefixes" rows="6">{{.Prefixes}}</textarea></label>
-    <div class="grid2">
-      <label>中等深度关键词 <small>每行一个</small><textarea name="medium_keywords" rows="3">{{.Medium}}</textarea></label>
-      <label>深度关键词 <small>每行一个</small><textarea name="deep_keywords" rows="3">{{.Deep}}</textarea></label>
-    </div>
-    <label>操作词表 <small>每行「操作词=指令」，指令：done postpone reschedule cancel list undo</small><textarea name="action_words" rows="8">{{.ActionWords}}</textarea></label>
-    <div class="form-foot"><button type="submit" class="primary">保存</button></div>
-  </form>
-  {{end}}
-</section>
+{{else if eq .Section "rules"}}
+{{with .General}}
+<form method="post" action="/settings/general" class="panel stack">
+  <input type="hidden" name="section" value="rules">
+  <h2>整理节奏</h2>
+  <div class="grid2">
+    <label class="full">整理时间 <small>多个用空格分隔，如 08:00 20:00</small><input name="batch_times" value="{{.BatchTimes}}"></label>
+    <label>每日摘要时间<input name="digest_time" value="{{.DigestTime}}" inputmode="numeric"></label>
+    <label>每日 token 上限 <small>0 表示不限</small><input name="token_limit" inputmode="numeric" value="{{.TokenLimit}}"></label>
+  </div>
+  <label class="check"><input type="checkbox" name="images" value="1" {{if .Images}}checked{{end}}> 把图片交给 AI 看（低清晰度）</label>
+  <div class="form-foot"><button type="submit" class="primary">保存</button></div>
+</form>
+{{end}}
+
+{{else if eq .Section "keywords"}}
+{{with .General}}
+<form method="post" action="/settings/general" class="panel stack">
+  <input type="hidden" name="section" value="keywords">
+  <h2>关键词与操作词</h2>
+  <label>分类关键词 <small>每行一条：关键词=分类（分类写代码或中文名），消息里任何位置出现即归类并打标签</small><textarea name="prefixes" rows="6">{{.Prefixes}}</textarea></label>
+  <label>标签关键词 <small>每行一条：关键词=标签，如「发票=票据」；消息里任何位置出现关键词就打上这个类别标签，不改分类</small><textarea name="label_rules" rows="5">{{.LabelRules}}</textarea></label>
+  <div class="grid2">
+    <label>中等深度关键词 <small>每行一个</small><textarea name="medium_keywords" rows="3">{{.Medium}}</textarea></label>
+    <label>深度关键词 <small>每行一个</small><textarea name="deep_keywords" rows="3">{{.Deep}}</textarea></label>
+  </div>
+  <label>操作词表 <small>每行「操作词=指令」，指令：done postpone reschedule cancel list undo</small><textarea name="action_words" rows="8">{{.ActionWords}}</textarea></label>
+  <div class="form-foot"><button type="submit" class="primary">保存</button></div>
+</form>
+{{end}}
+
+{{else if eq .Section "prompt"}}
+<form method="post" action="/settings/prompt" class="panel stack">
+  <h2>整理说明</h2>
+  <p class="hint">角色、各分类含义、标签和摘要的要求。当前时间、固定分类规则、已有标签、输出格式和各深度的 detail 要求由程序拼接，不在这里编辑。留空或「恢复默认」即使用内置默认文本。</p>
+  <label class="field"><span class="sr-only">提示词</span><textarea name="prompt" rows="18" spellcheck="false">{{.Prompt}}</textarea></label>
+  <div class="form-foot start">
+    <button type="submit" class="primary">保存</button>
+    <button type="submit" name="reset" value="1" data-confirm="恢复为内置默认提示词？当前修改会丢失。" class="quiet">恢复默认</button>
+  </div>
+</form>
+<details class="panel preview-box">
+  <summary>完整提示词预览 <small>只读，按轻量档、当前已有标签生成，即实际发给模型的内容</small></summary>
+  {{if .PromptPreview}}<pre class="raw preview" tabindex="0">{{.PromptPreview}}</pre>{{else}}<p class="hint">预览生成失败，详见服务日志。</p>{{end}}
+</details>
+{{end}}
 {{end}}
