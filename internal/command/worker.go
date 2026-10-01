@@ -20,6 +20,7 @@ const (
 	defaultJobTimeout = 2 * time.Minute
 	keepDone          = 7 * 24 * time.Hour // 已处理的 AI 指令记录保留多久（用于重放查重）
 	pendingBatch      = 50
+	replyTimeout      = 30 * time.Second
 )
 
 // worker 是 Handler 自带的后台：单个 goroutine 串行处理 ai_commands 里未完成的指令。
@@ -56,7 +57,7 @@ func (w *worker) notify() {
 	}
 }
 
-// Start 启动后台并立即续做上次没处理完的指令。只有第一次调用生效。
+// Start 启动后台并立即续做上次没处理完的指令。只有第一次调用生效；Close 之后再调用不做任何事。
 func (h *Handler) Start(ctx context.Context) {
 	w := &h.w
 	w.init()
@@ -75,6 +76,7 @@ func (h *Handler) Start(ctx context.Context) {
 func (h *Handler) Close() {
 	w := &h.w
 	w.init()
+	w.startOnce.Do(func() {}) // 没 Start 过就占掉，之后的 Start 不再启动；Start 进行中则等它完成
 	if w.cancel != nil {
 		w.cancel()
 		<-w.done
@@ -169,7 +171,9 @@ func (h *Handler) process(ctx context.Context, c store.AICommand) bool {
 	}
 	// 先回复再标完成：两步之间崩溃时重启会再处理一次，改条目的部分按 msg_id 去重，只会多回一条「已处理过」
 	if reply != "" && h.Reply != nil {
-		h.Reply(wctx, reply)
+		rctx, rcancel := context.WithTimeout(wctx, replyTimeout) // 发送卡住时不让 Close 一直等
+		h.Reply(rctx, reply)
+		rcancel()
 	}
 	if err := h.Store.FinishAICommand(wctx, c.MsgID, reply); err != nil {
 		h.log().Error("标记 AI 指令完成失败", "msg_id", c.MsgID, "err", err)

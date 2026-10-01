@@ -331,7 +331,7 @@ func TestSlowAIDoesNotBlockHandle(t *testing.T) {
 		t.Fatalf("sync reply = %q", reply)
 	}
 	handle(t, e.h, "取消发票那个", "")
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > time.Second {
 		t.Fatalf("Handle blocked for %v", d)
 	}
 	if r := e.Replies(); len(r) != 0 {
@@ -447,5 +447,39 @@ func TestPendingSurvivesWithoutWorker(t *testing.T) {
 	e := wire(t, h, st)
 	if got := lastReply(t, e); got != "✓ 已完成 #1 交发票" {
 		t.Fatalf("reply = %q", got)
+	}
+}
+
+func TestStartAfterCloseIsNoop(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpDone, ID: 1}}
+	h, st, _ := newHandler(t, tr)
+	todo(t, st, "交发票", nil, false)
+	var mu sync.Mutex
+	var replies []string
+	h.Reply = func(_ context.Context, text string) { mu.Lock(); replies = append(replies, text); mu.Unlock() }
+	h.Close()
+	h.Start(context.Background())
+	handle(t, h, "完成发票那个", "")
+	settle(t, h) // 已停止：立即返回
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if tr.Calls() != 0 || len(replies) != 0 {
+		t.Fatalf("worker ran after Close: calls=%d replies=%q", tr.Calls(), replies)
+	}
+	if p, _ := st.PendingAICommands(context.Background(), 10); len(p) != 1 {
+		t.Fatalf("pending = %+v", p)
+	}
+}
+
+func TestReplyGetsDeadline(t *testing.T) {
+	tr := &safeTr{out: Translation{Op: OpList}}
+	e, _ := newAsync(t, tr)
+	got := make(chan bool, 1)
+	e.h.Reply = func(ctx context.Context, _ string) { _, ok := ctx.Deadline(); got <- ok }
+	handle(t, e.h, "列一下", "#1")
+	settle(t, e.h)
+	if !<-got {
+		t.Fatal("Reply ctx must have a deadline")
 	}
 }

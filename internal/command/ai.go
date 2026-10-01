@@ -108,7 +108,7 @@ func (c *LLMChatter) Chat(ctx context.Context, system, user string) (string, int
 }
 
 // UsageLevel 是指令翻译记进 llm_usage 的 level；不计入每日批量整理的限额判断。
-const UsageLevel = "command"
+const UsageLevel = store.UsageLevelCommand
 
 // UsageRecorder 返回给 AITranslator.Record 用的函数：用量按上海日期记进 llm_usage（level=command）。
 func UsageRecorder(st *store.Store, clk clock.Clock, provider, modelName string) func(ctx context.Context, promptTokens, completionTokens int) {

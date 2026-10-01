@@ -22,8 +22,16 @@ func TestUsage(t *testing.T) {
 	if n, _ := st.TokensOn(ctx, "2026-10-02"); n != 0 {
 		t.Fatalf("empty day = %d", n)
 	}
+	// 指令翻译的用量不计入整理的日限额，但照常出现在用量统计里
+	st.AddUsage(ctx, Usage{Day: "2026-10-02", Level: UsageLevelCommand, Model: "m", PromptTokens: 7, CompletionTokens: 3})
+	if n, _ := st.TokensOn(ctx, "2026-10-02"); n != 0 {
+		t.Fatalf("command usage counted: %d", n)
+	}
+	if days, _ := st.UsageByDay(ctx, 1); len(days) != 1 || days[0] != (DayUsage{Day: "2026-10-02", PromptTokens: 7, CompletionTokens: 3, Calls: 1}) {
+		t.Fatalf("UsageByDay = %+v", days)
+	}
 	days, _ := st.UsageByDay(ctx, 10)
-	if len(days) != 2 || days[0] != (DayUsage{Day: "2026-10-01", PromptTokens: 110, CompletionTokens: 55, Calls: 2}) {
+	if len(days) != 3 || days[1] != (DayUsage{Day: "2026-10-01", PromptTokens: 110, CompletionTokens: 55, Calls: 2}) {
 		t.Fatalf("days = %+v", days)
 	}
 

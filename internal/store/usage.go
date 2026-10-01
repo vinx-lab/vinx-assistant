@@ -18,6 +18,9 @@ type Usage struct {
 	ItemID           int64
 }
 
+// UsageLevelCommand 是微信指令 AI 翻译记进 llm_usage 的 level；不计入整理的每日限额。
+const UsageLevelCommand = "command"
+
 func (s *Store) AddUsage(ctx context.Context, u Usage) error {
 	var item any
 	if u.ItemID != 0 {
@@ -28,10 +31,10 @@ func (s *Store) AddUsage(ctx context.Context, u Usage) error {
 	return err
 }
 
-// TokensOn 返回某天（上海日期 "YYYY-MM-DD"）已用的 token 总数。
+// TokensOn 返回某天（上海日期 "YYYY-MM-DD"）整理已用的 token 总数（不含指令翻译），供每日限额判断。
 func (s *Store) TokensOn(ctx context.Context, day string) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM llm_usage WHERE day = ?`, day).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM llm_usage WHERE day = ? AND level <> ?`, day, UsageLevelCommand).Scan(&n)
 	return n, err
 }
 
