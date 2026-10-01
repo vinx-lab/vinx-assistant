@@ -20,7 +20,7 @@ type usageData struct {
 	Today, TodayCommand, Limit int64 // Today 只含整理，与上限同口径
 	Days                       []usageDay
 	Max                        int64
-	Top                        []model.Item
+	TopItems                   []model.Item
 	Failed                     []model.Item
 }
 
@@ -53,7 +53,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		d.Days = append(d.Days, usageDay{DayUsage: u, Total: t, Command: cmd[u.Day], Organize: t - cmd[u.Day]})
 		d.Max = max(d.Max, t)
 	}
-	if d.Top, err = s.d.Store.TopItemsByTokens(ctx, 10); err != nil {
+	if d.TopItems, err = s.d.Store.TopItemsByTokens(ctx, 10); err != nil {
 		s.fail(w, err)
 		return
 	}
