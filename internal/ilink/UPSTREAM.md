@@ -33,6 +33,8 @@
 - 「处理失败不推进游标」依赖服务端按旧游标重发这一批：**尚未在真实服务端验证**，冒烟时要验证（让处理故意失败一次，看下一轮 `getupdates` 是否收到同一批）。
 - 只接收凭证里 `ilink_user_id` 对应的主人消息，其他来源拒收。
 
+- 实测新版引用只带 `message_item{type:0,msg_id}`，`msg_id` 即被引用消息的服务端 message_id；我们用它查 `sent_msgs` 还原（查不到再查 items，最后才用 `svr_id`）。type 0 是上游 `MessageItemType.NONE`，不算协议漂移。
+
 ## 有意不实现的部分
 
 上传媒体（`getuploadurl`）、输入状态（`sendtyping`、`getconfig`）、工具调用进度消息（类型 11、12）、SILK 转码、引用缓存里的媒体保留。第一期不需要；需要时按上表找上游文件对照实现。

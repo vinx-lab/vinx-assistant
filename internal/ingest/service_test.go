@@ -409,3 +409,20 @@ func TestRetryAttachmentsDuringPauseKeepsAttempts(t *testing.T) {
 		t.Fatalf("after resume = %+v", atts[0])
 	}
 }
+
+func TestRefByMessageItemMsgIDResolvesOurSentMessage(t *testing.T) {
+	cmd := &fakeCmd{handled: true}
+	e := newEnv(t, func(d *Deps) { d.Commands = cmd })
+	e.handle(t, ilinktest.TextMsg(1, ilinktest.OwnerID, "待办：交发票"))
+	e.clk.Advance(6 * time.Second)
+	e.svc.FlushAcks(context.Background())
+	ack := e.srv.Sent()[0]
+	e.handle(t, ilinktest.RefMsgIDMsg(2, ilinktest.OwnerID, "完成", ack.MsgID))
+	if len(cmd.got) != 1 || cmd.got[0].RefText != ack.Text || !cmd.got[0].HasRef {
+		t.Fatalf("cmd input = %+v, want RefText %q", cmd.got, ack.Text)
+	}
+	e.handle(t, ilinktest.RefMsgIDMsg(3, ilinktest.OwnerID, "完成", "424242"))
+	if cmd.got[1].RefText != "" || !cmd.got[1].HasRef {
+		t.Fatalf("unknown msg_id: %+v", cmd.got[1])
+	}
+}

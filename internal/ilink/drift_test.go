@@ -22,3 +22,10 @@ func TestDriftReportsUnknown(t *testing.T) {
 		t.Fatalf("drift = %v, want %v", got, want)
 	}
 }
+
+func TestDriftItemTypeZeroInRefIsKnown(t *testing.T) {
+	raw := `{"message_id":1,"item_list":[{"type":1,"text_item":{"text":"x"},"ref_msg":{"message_item":{"type":0,"msg_id":"1","create_time_ms":1,"update_time_ms":1,"is_completed":true,"at_bot_username_list":[],"button_item_list":[]}}}]}`
+	if got := Drift([]byte(raw)); len(got) != 0 {
+		t.Fatalf("drift = %v", got)
+	}
+}

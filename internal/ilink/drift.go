@@ -26,8 +26,9 @@ var knownKeys = map[string]map[string]bool{
 	"media":      set("encrypt_query_param", "aes_key", "encrypt_type", "full_url"),
 }
 
-// 上游定义的消息项类型：1–5 是内容，11、12 是 agent 工具调用进度（我们不处理）。
-var knownItemTypes = map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true, 11: true, 12: true}
+// 上游定义的消息项类型：0 是 MessageItemType.NONE（引用里的 message_item 用它），
+// 1–5 是内容，11、12 是 agent 工具调用进度（我们不处理）。
+var knownItemTypes = map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 11: true, 12: true}
 
 func set(keys ...string) map[string]bool {
 	m := make(map[string]bool, len(keys))

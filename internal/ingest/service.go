@@ -226,18 +226,35 @@ func (s *Service) resolveRef(ctx context.Context, ref *ilink.RefMessage) string 
 	if ref.Title != "" {
 		return ref.Title
 	}
+	// 实测新版引用只带 message_item{type:0,msg_id}，msg_id 即被引用消息的 message_id。
+	if mi := ref.MessageItem; mi != nil && mi.MsgID != "" {
+		if body, ok := s.lookupRef(ctx, mi.MsgID); ok {
+			return body
+		}
+	}
 	id := ref.SvrID.String()
 	if id == "" {
+		if ref.MessageItem != nil && ref.MessageItem.MsgID != "" {
+			s.Log.Info("引用的消息查不到原文", "msg_id", ref.MessageItem.MsgID)
+		}
 		return ""
 	}
-	if body, ok, err := s.Store.SentBody(ctx, id); err == nil && ok {
+	if body, ok := s.lookupRef(ctx, id); ok {
 		return body
-	}
-	if it, err := s.Store.GetItemByMsgID(ctx, id); err == nil {
-		return it.RawText
 	}
 	s.Log.Info("引用的消息查不到原文", "svr_id", id)
 	return ""
+}
+
+// lookupRef 先查我们发过的消息，再查主人发过的条目。
+func (s *Service) lookupRef(ctx context.Context, id string) (string, bool) {
+	if body, ok, err := s.Store.SentBody(ctx, id); err == nil && ok {
+		return body, true
+	}
+	if it, err := s.Store.GetItemByMsgID(ctx, id); err == nil {
+		return it.RawText, true
+	}
+	return "", false
 }
 
 const keyDrift = "ilink.drift"

@@ -242,6 +242,12 @@ func RefSvrMsg(id int64, from, text, svrID string) string {
 	return envelope(id, from, fmt.Sprintf(`{"type":1,"text_item":{"text":%s},"ref_msg":{"svr_id":%q}}`, t, svrID))
 }
 
+// RefMsgIDMsg 是实测的新版引用：ref_msg 只有 message_item{type:0,msg_id}，msg_id 是被引用消息的服务端 message_id。
+func RefMsgIDMsg(id int64, from, text, quotedMsgID string) string {
+	t, _ := json.Marshal(text)
+	return envelope(id, from, fmt.Sprintf(`{"type":1,"text_item":{"text":%s},"ref_msg":{"message_item":{"type":0,"msg_id":%q,"create_time_ms":1790825694222,"update_time_ms":1790825694222,"is_completed":true,"at_bot_username_list":[],"button_item_list":[]}}}`, t, quotedMsgID))
+}
+
 // ImageMsg：图片用十六进制 aeskey，媒体走 encrypt_query_param。
 func ImageMsg(id int64, from, param string, key []byte) string {
 	return envelope(id, from, fmt.Sprintf(`{"type":2,"image_item":{"aeskey":%q,"media":{"encrypt_query_param":%q}}}`, hex.EncodeToString(key), param))
