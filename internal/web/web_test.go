@@ -172,7 +172,7 @@ func TestRootIsBoard(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("code %d", code)
 	}
-	mustContain(t, body, `<a href="/" aria-current="page">看板</a>`, `href="/settings"`, `href="/login"`)
+	mustContain(t, body, `<a href="/" aria-current="page"><svg class="i"`, `</svg>看板</a>`, `href="/settings"`, `href="/login"`)
 }
 
 func TestCrossSitePostRejected(t *testing.T) {

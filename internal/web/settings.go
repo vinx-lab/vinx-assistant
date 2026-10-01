@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/vinx-lab/vinx-assistant/internal/batch"
+	"github.com/vinx-lab/vinx-assistant/internal/clock"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/redact"
 )
@@ -74,31 +75,48 @@ func applyGeneral(st *model.Settings, f generalForm) (string, error) {
 
 // settingSection 是设置页的一个小节。微信登录、用量是独立页面，也挂在设置的小节导航里。
 type settingSection struct {
-	Key, Name, Href string
+	Key, Name, Href, Icon string
 }
 
-var settingSections = []settingSection{
-	{"providers", "AI 服务商", "/settings"},
-	{"models", "模型", "/settings/models"},
-	{"rules", "整理与规则", "/settings/rules"},
-	{"keywords", "关键词", "/settings/keywords"},
-	{"prompt", "提示词", "/settings/prompt"},
-	{"login", "微信登录", "/login"},
-	{"usage", "用量", "/usage"},
+// settingGroup 是小节导航里的一组。
+type settingGroup struct {
+	Name     string
+	Sections []settingSection
 }
 
-// sectionHref 是设置小节的地址；未知小节回到服务商。
+var settingGroups = []settingGroup{
+	{"AI", []settingSection{
+		{"providers", "服务商", "/settings/providers", "key"},
+		{"models", "模型", "/settings/models", "cpu"},
+		{"prompt", "提示词", "/settings/prompt", "text"},
+	}},
+	{"整理", []settingSection{
+		{"rules", "时间与额度", "/settings/rules", "clockc"},
+		{"keywords", "关键词", "/settings/keywords", "tag"},
+	}},
+	{"账号与数据", []settingSection{
+		{"login", "微信登录", "/login", "wechat"},
+		{"usage", "用量", "/usage", "chart"},
+	}},
+}
+
+// sectionHref 是设置小节的地址；未知小节回到设置首页。
 func sectionHref(key string) string {
-	for _, sec := range settingSections {
-		if sec.Key == key {
-			return sec.Href
+	for _, g := range settingGroups {
+		for _, sec := range g.Sections {
+			if sec.Key == key {
+				return sec.Href
+			}
 		}
 	}
 	return "/settings"
 }
 
 // settingsPageSections 是由 settings 模板渲染的小节（不含独立页面 login、usage）。
-var settingsPageSections = map[string]string{"providers": "AI 服务商", "models": "模型", "rules": "整理与规则", "keywords": "关键词", "prompt": "提示词"}
+var settingsPageSections = map[string]string{"providers": "服务商", "models": "模型", "rules": "时间与额度", "keywords": "关键词", "prompt": "提示词"}
+
+// settingsIndex 是手机上设置首页分组列表右侧显示的当前值，键是小节 Key。
+type settingsIndex map[string]string
 
 type providerView struct {
 	ID, Name, BaseURL, KeyTail string
@@ -107,7 +125,10 @@ type providerView struct {
 
 type settingsData struct {
 	Page
-	Section   string // 当前小节：providers models rules keywords prompt
+	Section string // 当前小节：providers models rules keywords prompt
+	// IsIndex 表示访问的是 /settings：电脑上显示服务商小节，手机上显示分组列表（Index 是各项的当前值）
+	IsIndex   bool
+	Index     settingsIndex
 	General   generalForm
 	Providers []providerView
 	AI        model.AI
@@ -135,10 +156,17 @@ func modelOptions(models []string, cur string) []string {
 }
 
 func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status int, section string, st model.Settings, g generalForm, errMsg string) {
+	isIndex := r.Method == http.MethodGet && r.URL.Path == "/settings"
 	pg := s.page(r, settingsPageSections[section], "settings")
-	pg.Sub = section
-	d := settingsData{Page: pg, Section: section, General: g, AI: st.AI}
+	pg.Sub, pg.Up = section, "/settings"
+	if isIndex {
+		pg.Up = ""
+	}
+	d := settingsData{Page: pg, Section: section, IsIndex: isIndex, General: g, AI: st.AI}
 	d.Error = errMsg
+	if isIndex {
+		d.Index = s.settingsIndexOf(r.Context(), st, pg.Top.WeChat)
+	}
 	for _, p := range st.AI.Providers {
 		d.Providers = append(d.Providers, providerView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, KeyTail: redact.Secret(p.APIKey), Models: p.Models})
 	}
@@ -164,7 +192,35 @@ func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status i
 	s.render(w, status, "settings", d)
 }
 
-// settingsPage 显示一个设置小节：/settings 是 AI 服务商，/settings/{section} 是其余小节。
+// settingsIndexOf 是手机设置首页每一项右侧的当前值。
+func (s *Server) settingsIndexOf(ctx context.Context, st model.Settings, wechat string) settingsIndex {
+	ix := settingsIndex{"providers": "未设置", "models": "未设置", "prompt": "默认", "rules": strings.Join(st.Schedule.BatchTimes, " ")}
+	if n := len(st.AI.Providers); n == 1 {
+		ix["providers"] = st.AI.Providers[0].Name
+	} else if n > 1 {
+		ix["providers"] = strconv.Itoa(n) + " 个"
+	}
+	if m := st.AI.Light.Model; m != "" {
+		ix["models"] = m
+	}
+	if strings.TrimSpace(st.Prompt) != "" {
+		ix["prompt"] = "自定义"
+	}
+	if ix["rules"] == "" {
+		ix["rules"] = "未设置"
+	}
+	ix["keywords"] = strconv.Itoa(len(st.Rules.Prefixes)+len(st.Rules.LabelRules)) + " 条"
+	ix["login"] = map[string]string{"ok": "正常", "paused": "暂停中"}[wechat]
+	if ix["login"] == "" {
+		ix["login"] = "未登录"
+	}
+	if n, err := s.d.Store.TokensOn(ctx, clock.DayString(s.d.Clock.Now())); err == nil {
+		ix["usage"] = "今日 " + strconv.FormatInt(n, 10)
+	}
+	return ix
+}
+
+// settingsPage 显示一个设置小节：/settings 在电脑上是服务商小节、手机上是分组列表，/settings/{section} 是单个小节。
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	section := r.PathValue("section")
 	if section == "" {
@@ -323,7 +379,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings?msg=saved")
+	redirect(w, r, "/settings/providers?msg=saved")
 }
 
 // providerDelete 删除服务商，并清空引用它的档位。
@@ -350,7 +406,7 @@ func (s *Server) providerDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	redirect(w, r, "/settings?msg=deleted")
+	redirect(w, r, "/settings/providers?msg=deleted")
 }
 
 // providerModels 拉取服务商的模型列表（POST：会带着密钥访问外部服务）并保存到服务商上，供三档下拉使用。错误信息里的密钥打码。

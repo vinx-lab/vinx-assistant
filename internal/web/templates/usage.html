@@ -1,9 +1,10 @@
 {{define "content"}}
+<div class="page-head"><h1>用量</h1></div>
 <div class="stats">
   <div class="stat"><span class="k">今日整理已用</span><span class="v">{{.Today}}{{if .Limit}}<small> / {{.Limit}} 上限</small>{{else}}<small>（不限）</small>{{end}}</span></div>
   <div class="stat"><span class="k">今日指令</span><span class="v">{{.TodayCommand}}<small> 不计入上限</small></span></div>
 </div>
-<section class="panel">
+<section class="card">
   <div class="section-head"><h2>最近 30 天</h2><span class="hint">token，整理 + 指令</span></div>
   {{if .Days}}
   <div class="bars">
@@ -13,11 +14,11 @@
   </div>
   {{else}}<p class="empty">还没有 AI 调用记录。</p>{{end}}
 </section>
-<section class="panel">
+<section class="card">
   <h2>消耗最多的条目</h2>
   {{if .Top}}<ul class="rows">{{range .Top}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">{{.TokensUsed}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>
-<section class="panel">
+<section class="card">
   <h2>处理失败的条目</h2>
   {{if .Failed}}<ul class="rows">{{range .Failed}}<li><a href="/items/{{.ID}}">#{{.ID}} {{display .}}</a><span class="r">第 {{.ProcessAttempts}} 次 · {{.ProcessError}}</span></li>{{end}}</ul>{{else}}<p class="hint">无</p>{{end}}
 </section>

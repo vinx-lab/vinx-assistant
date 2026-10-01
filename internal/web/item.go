@@ -103,7 +103,9 @@ func (s *Server) renderItem(w http.ResponseWriter, r *http.Request, status int, 
 		s.fail(w, err)
 		return
 	}
-	d := itemData{Page: s.page(r, it.DisplayTitle(), "board"), Item: it, Atts: atts, Form: f,
+	pg := s.page(r, it.DisplayTitle(), "board")
+	pg.Up = "/?cat=" + string(it.Category)
+	d := itemData{Page: pg, Item: it, Atts: atts, Form: f,
 		Categories: editCategories(it.Category),
 		Priorities: []model.Priority{model.PriorityNone, model.PriorityHigh, model.PriorityMedium, model.PriorityLow}}
 	d.Error = errMsg

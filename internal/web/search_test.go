@@ -46,5 +46,8 @@ func TestSearchDateToInclusive(t *testing.T) {
 func TestNavLinks(t *testing.T) {
 	e := newEnv(t)
 	_, body := e.get(t, "/")
-	mustContain(t, body, `href="/search"`, `href="/usage"`)
+	mustContain(t, body, `href="/search"`, `href="/settings"`)
+	// 用量并入设置的二级菜单
+	_, body = e.get(t, "/settings/models")
+	mustContain(t, body, `href="/usage"`)
 }

@@ -44,7 +44,7 @@ func parseSearch(q, cat, status, from, to string) (store.SearchQuery, error) {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
 	d := searchData{Page: s.page(r, "搜索", "search"), Q: v.Get("q"), Cat: v.Get("cat"), Status: v.Get("status"),
-		From: v.Get("from"), To: v.Get("to"), Categories: model.Categories, Statuses: statusOrder}
+		From: v.Get("from"), To: v.Get("to"), Categories: boardOrder, Statuses: statusOrder}
 	if d.Q == "" && d.Cat == "" && d.Status == "" && d.From == "" && d.To == "" {
 		s.render(w, http.StatusOK, "search", d)
 		return

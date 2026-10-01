@@ -128,8 +128,46 @@ type Page struct {
 	Title string
 	Nav   string // 主导航当前项：board search settings
 	Sub   string // 设置小节导航当前项（见 settingSections）
+	Up    string // 手机顶栏的返回地址（设置小节、条目详情）；空表示不显示返回
 	Msg   string // 操作结果提示
 	Error string // 校验错误
+	Top   TopStatus
+}
+
+// TopStatus 是顶栏右侧的状态：微信连接、下次整理、立即整理。
+type TopStatus struct {
+	WeChat    string // ok / paused / no_cred
+	NextBatch string
+	Running   bool
+	Back      string // 「立即整理」之后回到的地址
+}
+
+func (s *Server) topStatus(r *http.Request) TopStatus {
+	t := TopStatus{Back: "/"}
+	if r.Method == http.MethodGet {
+		q := r.URL.Query()
+		q.Del("msg")
+		t.Back = r.URL.Path
+		if len(q) > 0 {
+			t.Back += "?" + q.Encode()
+		}
+	}
+	ctx := r.Context()
+	if s.d.Session != nil {
+		t.WeChat = s.d.Session.Status(ctx)
+	}
+	if s.d.BatchRunning != nil {
+		t.Running = s.d.BatchRunning()
+	}
+	if s.d.NextBatch != nil && s.d.Store != nil {
+		if st, err := s.d.Store.LoadSettings(ctx); err == nil {
+			now := s.d.Clock.Now()
+			if at, ok := s.d.NextBatch(now, st.Schedule.BatchTimes); ok {
+				t.NextBatch = relTime(at, now)
+			}
+		}
+	}
+	return t
 }
 
 var messages = map[string]string{
@@ -143,13 +181,13 @@ var messages = map[string]string{
 }
 
 func (s *Server) page(r *http.Request, title, nav string) Page {
-	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")]}
+	return Page{Title: title, Nav: nav, Msg: messages[r.URL.Query().Get("msg")], Top: s.topStatus(r)}
 }
 
 // subPage 是挂在设置小节导航下的页面（微信登录、用量）。
 func (s *Server) subPage(r *http.Request, title, sub string) Page {
 	p := s.page(r, title, "settings")
-	p.Sub = sub
+	p.Sub, p.Up = sub, "/settings"
 	return p
 }
 
@@ -218,11 +256,28 @@ func (s *Server) funcs() template.FuncMap {
 			}
 			return out
 		},
-		"md":              renderMarkdown,
-		"settingSections": func() []settingSection { return settingSections },
-		"secret":          redact.Secret,
-		"fmtTime":         func(t time.Time) string { return t.In(clock.Zone).Format("2006-01-02 15:04") },
-		"join":            strings.Join,
+		// menuChoices 是「⋯」菜单里的状态：其余可选状态，已有一键完成圆圈时去掉「完成」
+		"menuChoices": func(it model.Item) []string {
+			var out []string
+			for _, st := range statusOrder {
+				if st == it.Status || !model.ValidStatus(it.Category, st) {
+					continue
+				}
+				if st == model.StatusDone && it.Category == model.CatTodo && it.Status == model.StatusOpen {
+					continue
+				}
+				out = append(out, st)
+			}
+			return out
+		},
+		"md":            renderMarkdown,
+		"settingGroups": func() []settingGroup { return settingGroups },
+		"catIcon":       func(c model.Category) string { return categoryIcons[c] },
+		// canCheck：待办还没办完时，列表左侧显示「一键完成」圆圈
+		"canCheck": func(it model.Item) bool { return it.Category == model.CatTodo && it.Status == model.StatusOpen },
+		"secret":   redact.Secret,
+		"fmtTime":  func(t time.Time) string { return t.In(clock.Zone).Format("2006-01-02 15:04") },
+		"join":     strings.Join,
 		"pct": func(v, max int64) int64 {
 			if max <= 0 {
 				return 0

@@ -1,4 +1,4 @@
-// Vinx 助手页面脚本：二次确认、三档模型下拉、侧栏展开与横滑定位、扫码登录轮询；没有外部依赖。
+// Vinx 助手页面脚本：二次确认、三档模型下拉、看板筛选抽屉、条目菜单、扫码登录轮询；没有外部依赖。
 (function () {
   // 1. 危险操作二次确认
   document.addEventListener('click', function (e) {
@@ -67,15 +67,44 @@
       .then(function () { b.disabled = false; });
   });
 
-  // 侧栏：桌面上标签筛选默认展开（手机上折叠）；分类条、设置小节条在手机上横向滚动，把当前项滚到可见处（不动页面的纵向位置）
-  if (window.matchMedia('(min-width: 900px)').matches) {
-    document.querySelectorAll('details[data-desktop-open]').forEach(function (d) { d.open = true; });
-  } else {
-    document.querySelectorAll('.cats a[aria-current], .subnav a[aria-current]').forEach(function (cur) {
-      var strip = cur.parentNode;
-      strip.scrollLeft = cur.offsetLeft - strip.offsetLeft - 16;
+  // 4. 看板侧栏与筛选抽屉
+  var root = document.documentElement, wide = window.matchMedia('(min-width: 861px)');
+  root.classList.add('js');
+  var fbox = document.getElementById('filterbox'), fbody = document.getElementById('fb-body'), sheet = document.getElementById('filter-sheet');
+  // 电脑：标签筛选直接展开在侧栏里
+  if (fbox && wide.matches) fbox.open = true;
+  // 手机：有 <dialog> 时，筛选按钮打开底部抽屉，把筛选内容移进去；关闭时放回原处
+  if (fbox && fbody && sheet && typeof sheet.showModal === 'function') {
+    root.classList.add('js-sheet');
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('[data-open-filter]')) {
+        sheet.appendChild(fbody);
+        sheet.showModal();
+      } else if (e.target.closest('[data-close-filter]')) {
+        if (sheet.open) sheet.close();
+      } else if (e.target === sheet) { // 点在抽屉外的遮罩上
+        var r = sheet.getBoundingClientRect();
+        if (e.clientY < r.top || e.clientX < r.left || e.clientX > r.right) sheet.close();
+      }
     });
+    sheet.addEventListener('close', function () { fbox.appendChild(fbody); });
   }
+  // 手机分类横滑：把当前分类滚到可见处（不动页面的纵向位置）
+  if (!wide.matches) {
+    var cur = document.querySelector('.cats a[aria-current]');
+    if (cur) cur.parentNode.scrollLeft = cur.offsetLeft - cur.parentNode.offsetLeft - 16;
+  }
+
+  // 5. 条目「⋯」菜单：同时只开一个；点外面或按 Esc 关闭
+  function closeMenus(except) {
+    document.querySelectorAll('details.rowmenu[open]').forEach(function (d) { if (d !== except) d.open = false; });
+  }
+  document.addEventListener('click', function (e) { closeMenus(e.target.closest('details.rowmenu')); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var open = document.querySelector('details.rowmenu[open]');
+    if (open) { open.open = false; open.querySelector('summary').focus(); }
+  });
 
   // 3. 扫码登录：轮询状态
   var box = document.querySelector('[data-login-state]');

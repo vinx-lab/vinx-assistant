@@ -245,24 +245,32 @@ func TestSettingsSections(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	for path, want := range map[string]string{
-		"/settings":          `<a href="/settings" aria-current="page">AI 服务商</a>`,
-		"/settings/models":   `<a href="/settings/models" aria-current="page">模型</a>`,
-		"/settings/rules":    `<a href="/settings/rules" aria-current="page">整理与规则</a>`,
-		"/settings/keywords": `<a href="/settings/keywords" aria-current="page">关键词</a>`,
-		"/settings/prompt":   `<a href="/settings/prompt" aria-current="page">提示词</a>`,
-		"/login":             `<a href="/login" aria-current="page">微信登录</a>`,
-		"/usage":             `<a href="/usage" aria-current="page">用量</a>`,
+		"/settings":           `<a href="/settings/providers" aria-current="page">`,
+		"/settings/providers": `<a href="/settings/providers" aria-current="page">`,
+		"/settings/models":    `<a href="/settings/models" aria-current="page">`,
+		"/settings/rules":     `<a href="/settings/rules" aria-current="page">`,
+		"/settings/keywords":  `<a href="/settings/keywords" aria-current="page">`,
+		"/settings/prompt":    `<a href="/settings/prompt" aria-current="page">`,
+		"/login":              `<a href="/login" aria-current="page">`,
+		"/usage":              `<a href="/usage" aria-current="page">`,
 	} {
 		code, body := e.get(t, path)
 		if code != http.StatusOK {
 			t.Fatalf("%s: code %d", path, code)
 		}
-		mustContain(t, body, want, `<a href="/settings" aria-current="page">设置</a>`)
+		mustContain(t, body, want, `<a href="/settings" aria-current="page">`)
+		if path != "/settings" {
+			mustContain(t, body, `class="icon-btn m-back" href="/settings"`) // 手机顶栏返回设置首页
+		}
 	}
+	// 设置首页：手机上的分组列表，每项右侧是当前值
+	_, body := e.get(t, "/settings")
+	mustContain(t, body, `class="m-index"`, "时间与额度", "账号与数据", `<span class="v">未登录</span>`, `<span class="v">默认</span>`)
+	mustNotContain(t, body, "m-back")
 	if code, _ := e.get(t, "/settings/nope"); code != http.StatusNotFound {
 		t.Fatalf("unknown section: %d", code)
 	}
-	_, body := e.get(t, "/settings/rules")
+	_, body = e.get(t, "/settings/rules")
 	mustContain(t, body, `name="batch_times"`, `name="section" value="rules"`)
 	mustNotContain(t, body, `name="prefixes"`, `name="light_model"`)
 	_, body = e.get(t, "/settings/keywords")
@@ -304,7 +312,7 @@ func TestSettingsSections(t *testing.T) {
 	mustContain(t, body, `name="label_rules"`, "发票=票据")
 	// 提示词小节：文本框、恢复默认、只读预览；保存后回到提示词小节
 	_, body = e.get(t, "/settings/prompt")
-	mustContain(t, body, `action="/settings/prompt"`, `name="prompt"`, `name="reset" value="1"`, `class="raw preview"`)
+	mustContain(t, body, `action="/settings/prompt"`, `name="prompt"`, `name="reset" value="1"`, `<details class="card preview">`)
 	resp, _ = e.post(t, "/settings/prompt", url.Values{"prompt": {"自定义说明"}})
 	if resp.Header.Get("Location") != "/settings/prompt?msg=saved" {
 		t.Fatalf("prompt save: %s", resp.Header.Get("Location"))

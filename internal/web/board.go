@@ -90,6 +90,15 @@ func relTime(t, now time.Time) string {
 	return t.Format("01-02 15:04")
 }
 
+// boardOrder 是看板分类的顺序：未整理放最前面，提醒先把它们处理掉。
+var boardOrder = []model.Category{model.CatInbox, model.CatTodo, model.CatResearch, model.CatLater, model.CatIdea, model.CatArchive}
+
+// categoryIcons 是分类对应的图标（layout.html 里 SVG sprite 的 id 后缀）。
+var categoryIcons = map[model.Category]string{
+	model.CatInbox: "tray", model.CatTodo: "todo", model.CatResearch: "flask",
+	model.CatLater: "clock", model.CatIdea: "bulb", model.CatArchive: "archive",
+}
+
 type tab struct {
 	Cat    model.Category
 	Name   string
@@ -156,7 +165,7 @@ func (s *Server) board(w http.ResponseWriter, r *http.Request) {
 	}
 	d.OpenCount, d.DoneCount = open[cat], doneCounts[cat]
 	// 分类标签上的数字是默认视图（未处理 + 点子、资料）的条目数；切到别的分类回到默认视图
-	for _, c := range model.Categories {
+	for _, c := range boardOrder {
 		d.Tabs = append(d.Tabs, tab{Cat: c, Name: model.CategoryName(c), Count: open[c], Active: c == cat, Href: boardHref(c, tag, false)})
 	}
 	if d.Items, err = s.d.Store.ListItems(ctx, store.ListQuery{Category: cat, Tag: tag, Done: done}); err != nil {

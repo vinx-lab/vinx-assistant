@@ -47,6 +47,7 @@ func TestBoardRendersStatusTabsAndCards(t *testing.T) {
 	mustNotContain(t, body, "#1 交房租")
 }
 
+// 今日 token 和上限在用量页显示（0002 起看板不再显示 token 胶囊）。
 func TestBoardTokenLimit(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -55,14 +56,16 @@ func TestBoardTokenLimit(t *testing.T) {
 	if err := e.st.SaveSettings(ctx, st); err != nil {
 		t.Fatal(err)
 	}
-	_, body := e.get(t, "/")
-	mustContain(t, body, "今日 token 0 / 5000")
+	_, body := e.get(t, "/usage")
+	mustContain(t, body, "<small> / 5000 上限</small>")
+	_, body = e.get(t, "/")
+	mustNotContain(t, body, "今日 token")
 	st.AI.DailyTokenLimit = 0
 	if err := e.st.SaveSettings(ctx, st); err != nil {
 		t.Fatal(err)
 	}
-	_, body = e.get(t, "/")
-	mustContain(t, body, "今日 token 0（不限）")
+	_, body = e.get(t, "/usage")
+	mustContain(t, body, "<small>（不限）</small>")
 }
 
 func TestBoardWeChatPaused(t *testing.T) {
@@ -220,7 +223,31 @@ func TestSplitTopics(t *testing.T) {
 	}
 	_, body := e.get(t, "/?cat=idea")
 	// 类别标签实心、不带 #；内容标签描边、带 #
-	mustContain(t, body, "类别标签", "内容标签", "展开全部（另 2 个）", `<a class="tag tag-label" href="/?cat=idea&tag=%e7%a5%a8%e6%8d%ae" >票据<span class="n">1</span></a>`,
-		`class="tag tag-topic"`, ">#标签00<")
+	mustContain(t, body, "类别标签", "内容标签", "展开全部（另 2 个）", `<a class="chip label" href="/?cat=idea&tag=%e7%a5%a8%e6%8d%ae" >票据<span class="n">1</span></a>`,
+		`class="chip topic"`, ">#标签00<")
 	mustNotContain(t, body, ">#票据")
+}
+
+// 列表行：待办左侧一键完成，其余操作在「⋯」菜单；非待办用分类图标；卡片上不重复当前分类同名的类别标签；
+// 分类「未整理」排最前；到期提醒只在有逾期或今天到期时出现。
+func TestBoardRows(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	id := e.item(t, &model.Item{MsgID: "1", RawText: "买牛奶", Category: model.CatTodo})
+	e.st.SetTags(ctx, id, store.TagKindLabel, []string{"待办", "票据"})
+	e.item(t, &model.Item{MsgID: "2", RawText: "一篇长文", Category: model.CatResearch})
+
+	_, body := e.get(t, "/?cat=todo")
+	mustContain(t, body,
+		`<input type="hidden" name="status" value="done"><button type="submit" class="check" aria-label="标记完成：买牛奶">`,
+		`<details class="rowmenu">`, `<button type="submit">已取消</button>`, `<button type="submit">深入研究</button>`,
+		`<a class="chip label" href="/?cat=todo&tag=%e7%a5%a8%e6%8d%ae">票据</a>`)
+	mustNotContain(t, body, `<a class="chip label" href="/?cat=todo&tag=%e5%be%85%e5%8a%9e">待办</a>`, `<button type="submit">完成</button>`, "今天到期", `class="alert amber"`)
+	if i, j := strings.Index(body, ">未整理 <b>"), strings.Index(body, ">待办 <b>"); i < 0 || j < 0 || i > j {
+		t.Fatalf("未整理应排在待办前：%d %d", i, j)
+	}
+
+	_, body = e.get(t, "/?cat=research")
+	mustContain(t, body, `<span class="kind-ico" title="待研究">`, `<button type="submit">研究中</button>`)
+	mustNotContain(t, body, `class="check"`)
 }
