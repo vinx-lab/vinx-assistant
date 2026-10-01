@@ -15,14 +15,20 @@ import (
 )
 
 type fakeNotifier struct {
-	mu   sync.Mutex
-	sent []string
-	fail error
+	mu     sync.Mutex
+	sent   []string
+	fail   error
+	calls  int
+	onSend func() // 可选：Send 时调用（如取消 ctx）
 }
 
 func (f *fakeNotifier) Send(ctx context.Context, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls++
+	if f.onSend != nil {
+		f.onSend()
+	}
 	if f.fail != nil {
 		return f.fail
 	}

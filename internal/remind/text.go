@@ -29,7 +29,11 @@ func itemLine(it model.Item, now time.Time) string {
 
 // BuildDigest 生成每日摘要。逾期的每天都列；只有日期的截止出现在当天和前一天（明天到期段）的摘要里。
 func BuildDigest(now time.Time, d store.DigestData) string {
-	now = now.In(clock.Zone)
+	return fit(digestLines(now.In(clock.Zone), d), digestFooter)
+}
+
+// digestLines 摘要正文各行（不含页脚）；now 须已是 clock.Zone。
+func digestLines(now time.Time, d store.DigestData) []string {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	lines := []string{"📋 今日摘要 " + model.FormatDue(today, false, now)}
 	sections := []struct {
@@ -61,19 +65,37 @@ func BuildDigest(now time.Time, d store.DigestData) string {
 		}
 	}
 	lines = append(lines, fmt.Sprintf("昨天新收 %d 条。", d.NewYesterday))
-	return fit(lines, digestFooter)
+	return lines
 }
 
 // BuildDue 生成到期提醒（或补发）文本，每条都带 #编号。
 func BuildDue(items []model.Item, now time.Time, header string) string {
+	return buildMessage(now, nil, items, header)
+}
+
+// buildMessage 把摘要（可为 nil）和到期条目合成一条消息：摘要在前，到期段在后，
+// 整体按 MaxRunes 截断，页脚只保留一个。
+func buildMessage(now time.Time, d *store.DigestData, due []model.Item, header string) string {
 	now = now.In(clock.Zone)
-	lines := []string{header}
-	for _, it := range items {
-		lines = append(lines, itemLine(it, now))
+	var lines []string
+	if d != nil {
+		lines = digestLines(now, *d)
+	}
+	if len(due) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, header)
+		for _, it := range due {
+			lines = append(lines, itemLine(it, now))
+		}
 	}
 	footer := "回复「完成 编号」标记完成。"
-	if len(items) == 1 {
-		footer = fmt.Sprintf("回复「完成 %d」标记完成。", items[0].ID)
+	switch {
+	case d != nil:
+		footer = digestFooter
+	case len(due) == 1:
+		footer = fmt.Sprintf("回复「完成 %d」标记完成。", due[0].ID)
 	}
 	return fit(lines, footer)
 }
