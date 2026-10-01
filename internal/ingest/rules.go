@@ -4,6 +4,7 @@ package ingest
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 )
@@ -27,8 +28,8 @@ func isSep(r rune) bool {
 
 // matchKeyword 在文本里找分类关键词，出现在任何位置都算，不要求分隔符。
 //  1. 取所有合法关键词（非空、分类合法）的最早出现位置；同位置多个命中取更长的（「待研究」优先于「研究」）。
-//  2. 命中在开头：去掉关键词和紧随其后的分隔符，剩下的作为正文；去掉后为空则保留原文。
-//  3. 命中不在开头：正文保持原文。
+//  2. 命中在开头且紧跟分隔符（中英文冒号、逗号、空白）：去掉关键词和分隔符，剩下的作为正文；去掉后为空则保留原文。
+//  3. 其余情况（不在开头，或开头但没有分隔符）：正文保持原文，避免丢信息。
 func matchKeyword(text string, prefixes []model.PrefixRule) (model.Category, string, bool) {
 	best, bestPos := -1, 0
 	for i, p := range prefixes {
@@ -50,7 +51,11 @@ func matchKeyword(text string, prefixes []model.PrefixRule) (model.Category, str
 	if bestPos != 0 {
 		return cat, text, true
 	}
-	rest := strings.TrimSpace(strings.TrimLeftFunc(text[len(prefixes[best].Prefix):], isSep))
+	after := text[len(prefixes[best].Prefix):]
+	if r, _ := utf8.DecodeRuneInString(after); after == "" || !isSep(r) {
+		return cat, text, true
+	}
+	rest := strings.TrimSpace(strings.TrimLeftFunc(after, isSep))
 	if rest == "" {
 		rest = text
 	}
