@@ -16,12 +16,14 @@ import (
 
 	"github.com/vinx-lab/vinx-assistant/internal/batch"
 	"github.com/vinx-lab/vinx-assistant/internal/clock"
+	"github.com/vinx-lab/vinx-assistant/internal/command"
 	"github.com/vinx-lab/vinx-assistant/internal/enrich"
 	"github.com/vinx-lab/vinx-assistant/internal/ilink"
 	"github.com/vinx-lab/vinx-assistant/internal/ingest"
 	"github.com/vinx-lab/vinx-assistant/internal/llm"
 	"github.com/vinx-lab/vinx-assistant/internal/model"
 	"github.com/vinx-lab/vinx-assistant/internal/notify"
+	"github.com/vinx-lab/vinx-assistant/internal/remind"
 	"github.com/vinx-lab/vinx-assistant/internal/session"
 	"github.com/vinx-lab/vinx-assistant/internal/store"
 	"github.com/vinx-lab/vinx-assistant/internal/web"
@@ -53,6 +55,8 @@ type App struct {
 	Log       *slog.Logger
 	TickEvery time.Duration
 	Batch     *batch.Runner
+	Remind    *remind.Service
+	Commands  *command.Handler
 
 	baseCtx context.Context // Run 期间的根 context；BatchNow 用它，服务退出时后台批次随之取消
 	bg      sync.WaitGroup  // BatchNow 启动的后台批次；Close 前等它结束
@@ -85,6 +89,7 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 	})
 	a.Batch = &batch.Runner{Store: st, Clock: a.Clock, Fetcher: a.Fetcher, MediaDir: cfg.MediaDir(), Log: log}
 	a.Tickers = append(a.Tickers, &batch.Scheduler{Runner: a.Batch, Store: st, Log: log})
+	a.wireCommandsAndReminders(hc)
 	web.Register(a.Mux, web.Deps{
 		BatchNow: a.BatchNow, BatchRunning: a.Batch.Running, NextBatch: batch.NextSlot,
 		Store: st, Session: a.Session, Clock: a.Clock, MediaDir: cfg.MediaDir(), Log: log,
@@ -95,7 +100,6 @@ func New(cfg Config, log *slog.Logger) (*App, error) {
 		// 用域名（如 Tailscale MagicDNS）访问网页时，把域名写进 VINX_ALLOWED_HOSTS（逗号分隔）。
 		AllowedHosts: web.ParseHosts(os.Getenv("VINX_ALLOWED_HOSTS")),
 	})
-	// 计划 3–4 在这里追加装配（计划 2 的 batch 已在上面随 web.Deps 装配）。
 	return a, nil
 }
 
@@ -118,9 +122,10 @@ func (a *App) BatchNow() bool {
 	return true
 }
 
-// Close 先等 BatchNow 的后台批次结束，再停掉后处理队列（serve 退出时已停过，重复调用无害），最后关数据库。
+// Close 先等 BatchNow 的后台批次结束，再停掉指令后台和后处理队列（serve 退出时已停过，重复调用无害），最后关数据库。
 func (a *App) Close() error {
 	a.bg.Wait()
+	a.Commands.Close()
 	a.Ingest.Close()
 	return a.Store.Close()
 }
@@ -172,6 +177,8 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 
 	var wg sync.WaitGroup
 	run := func(fn func()) { wg.Add(1); go func() { defer wg.Done(); fn() }() }
+	// 指令 AI 兜底的后台：续做上次没处理完的指令。
+	a.Commands.Start(ctx)
 	poller := &ingest.Poller{Session: a.Session, Service: a.Ingest, Store: a.Store, Log: a.Log}
 	run(func() { poller.Run(ctx) })
 	run(func() { every(ctx, time.Second, func() { a.Ingest.FlushAcks(ctx) }) })
@@ -205,15 +212,19 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	defer scancel()
 	srv.Shutdown(sctx)
 	wg.Wait()
+	// 收件已停：停掉指令后台（进行中的 AI 调用取消，指令留在库里下次续做；已拿到结果的执行完、回复完）。
+	// 它可能把消息补存为条目、往后处理队列里放任务，所以要在后处理队列之前停。
+	a.Commands.Close()
+	a.Commands.Wait(context.Background()) // Close 后立即返回
+	// 停掉后处理队列（正在下的附件中断、积压的丢弃，附件仍是 pending，下次启动由重试补下）。
+	a.Ingest.Close()
+	a.Ingest.Wait()
 	// 定时器触发的后台批次：ctx 已取消，正在进行的 AI 调用很快返回。
 	for _, t := range a.Tickers {
 		if w, ok := t.(interface{ Wait() }); ok {
 			w.Wait()
 		}
 	}
-	// 收件已停：停掉后处理队列（正在下的附件中断、积压的丢弃，附件仍是 pending，下次启动由重试补下）。
-	a.Ingest.Close()
-	a.Ingest.Wait()
 	// 退出前把还没到点的合并回执发掉；ctx 已取消，另起一个 3 秒的。
 	fctx, fcancel := context.WithTimeout(context.Background(), 3*time.Second)
 	a.Ingest.FlushAllAcks(fctx)

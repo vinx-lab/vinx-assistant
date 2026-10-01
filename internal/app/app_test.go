@@ -6,9 +6,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/vinx-lab/vinx-assistant/internal/ingest"
 )
 
 func freeAddr(t *testing.T) string {
@@ -140,5 +145,70 @@ func TestBatchNowWiredIntoWebDeps(t *testing.T) {
 	defer a.Close()
 	if a.Batch == nil || len(a.Tickers) == 0 {
 		t.Fatal("batch runner and scheduler must be wired")
+	}
+}
+
+func TestNewWiresCommandsAndReminders(t *testing.T) {
+	a, err := New(Config{Listen: "127.0.0.1:0", DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if a.Commands == nil || a.Remind == nil {
+		t.Fatal("commands/remind not built")
+	}
+	if a.Ingest.Commands != ingest.CommandHandler(a.Commands) || a.Ingest.Deferred != ingest.Deferred(a.Remind) {
+		t.Fatal("ingest not wired")
+	}
+	if a.Remind.Session == nil || a.Remind.Notifier == nil || a.Remind.Clock == nil {
+		t.Fatalf("remind deps missing: %+v", a.Remind)
+	}
+	if a.Commands.Reply == nil || a.Commands.SaveAsItem == nil || a.Commands.Translator == nil {
+		t.Fatal("command handler deps missing")
+	}
+	found := false
+	for _, tk := range a.Tickers {
+		if tk == Ticker(a.Remind) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("remind ticker missing")
+	}
+	tr, err := commandTranslator(a.Store, nil, a.Clock)(context.Background())
+	if err != nil || tr != nil {
+		t.Fatalf("unconfigured AI must give nil translator: %v %v", tr, err)
+	}
+}
+
+func TestWebMountedAndBatchRun(t *testing.T) {
+	a, err := New(Config{Listen: "127.0.0.1:0", DataDir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	srv := httptest.NewServer(a.Mux)
+	defer srv.Close()
+	for _, p := range []string{"/", "/settings", "/search", "/usage", "/login", "/static/app.css", "/healthz"} {
+		resp, err := http.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: %d", p, resp.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/batch/run", strings.NewReader(url.Values{"back": {"/"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "msg=") {
+		t.Fatalf("batch/run: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
